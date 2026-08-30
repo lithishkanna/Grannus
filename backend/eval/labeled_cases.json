@@ -1,0 +1,62 @@
+[
+  {
+    "id": "case_01_negation",
+    "transcript_english": "I have had fever for 3 days. After that I started getting a mild cough, maybe on and off. I don't have any chest pain.",
+    "expected_symptoms": [
+      {"name": "fever", "negated": false},
+      {"name": "cough", "negated": false},
+      {"name": "chest pain", "negated": true}
+    ],
+    "expected_red_flag_keywords": []
+  },
+  {
+    "id": "case_02_red_flags_full_scan",
+    "transcript_english": "Yesterday I had cold-like symptoms and a mild headache. Today my chest pain became severe and I'm finding it hard to breathe.",
+    "expected_symptoms": [
+      {"name": "cold-like symptoms", "negated": false},
+      {"name": "headache", "negated": false},
+      {"name": "chest pain", "negated": false},
+      {"name": "difficulty breathing", "negated": false}
+    ],
+    "expected_red_flag_keywords": ["chest pain", "breath"]
+  },
+  {
+    "id": "case_03_vague",
+    "transcript_english": "I'm not feeling well, something is wrong with my stomach I think.",
+    "expected_symptoms": [
+      {"name": "abdominal pain", "negated": false}
+    ],
+    "expected_red_flag_keywords": []
+  },
+  {
+    "id": "case_04_multi_symptom_no_overlap_duration",
+    "transcript_english": "My fever has been going on for 3 days. I also have cold-like symptoms for the last 2 days, and my chest pain comes and goes, not constant. I also noticed some hair loss recently but I don't know exactly when it started.",
+    "expected_symptoms": [
+      {"name": "fever", "negated": false},
+      {"name": "cold-like symptoms", "negated": false},
+      {"name": "chest pain", "negated": false},
+      {"name": "hair loss", "negated": false}
+    ],
+    "expected_red_flag_keywords": ["chest pain"]
+  },
+  {
+    "id": "case_05_emergency_bleeding",
+    "transcript_english": "I fell down and now there is heavy bleeding from my leg, I feel dizzy.",
+    "expected_symptoms": [
+      {"name": "severe bleeding", "negated": false},
+      {"name": "dizziness", "negated": false}
+    ],
+    "expected_red_flag_keywords": ["bleeding"]
+  },
+  {
+    "id": "case_06_double_negation",
+    "transcript_english": "I don't have fever and I don't have any breathing problems, but I do have a headache and body pain since this morning.",
+    "expected_symptoms": [
+      {"name": "fever", "negated": true},
+      {"name": "difficulty breathing", "negated": true},
+      {"name": "headache", "negated": false},
+      {"name": "body pain", "negated": false}
+    ],
+    "expected_red_flag_keywords": []
+  }
+]
