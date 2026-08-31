@@ -73,6 +73,7 @@ def assess_priority(
     summary: StructuredMedicalSummary,
     patient_context: Optional[dict] = None,
     safety_screening: Optional[SafetyScreening] = None,
+    features: Optional[dict] = None,
 ) -> PriorityAssessment:
     """
     Assess patient priority level using Safety Engine + ML Model with Rule-Based Fallback.
@@ -100,8 +101,9 @@ def assess_priority(
             model_used="safety_override",
         )
 
-    # 4. Extract features for ML model
-    features = extract_features(summary, patient_context)
+    # 4. Use pre-computed features if provided, otherwise extract now
+    if features is None:
+        features = extract_features(summary, patient_context)
     ml_model = get_model()
 
     # 5. ML Inference
@@ -115,6 +117,18 @@ def assess_priority(
                 level = PriorityLevel.HIGH
             elif level_str == "LOW":
                 level = PriorityLevel.LOW
+
+            # Sanity gate: never let ML predict LOW when the rule-based score
+            # is firmly in the HIGH range — the rule engine has better signal
+            # for symptoms the ML model was not trained on.
+            if level == PriorityLevel.LOW and rule_score >= HIGH_THRESHOLD:
+                logger.warning(
+                    "ML sanity gate: elevating ML LOW to MEDIUM because rule_score=%.2f >= HIGH_THRESHOLD=%.1f",
+                    rule_score, HIGH_THRESHOLD,
+                )
+                level = PriorityLevel.MEDIUM
+                confidence = max(confidence, 0.6)
+                reasons = reasons + [f"Safety floor: rule-based score {rule_score:.1f} conflicts with ML LOW"]
 
             logger.info("ML priority assessment level=%s conf=%.2f reasons=%s", level, confidence, reasons)
             return PriorityAssessment(

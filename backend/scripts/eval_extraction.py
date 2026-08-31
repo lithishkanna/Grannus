@@ -43,7 +43,7 @@ from app.vocab import normalize_symptom_name  # noqa: E402
 CASES_PATH = Path(__file__).resolve().parent.parent / "eval" / "labeled_cases.json"
 
 
-def _mock_extract(transcript_english: str, patient_context=None) -> StructuredMedicalSummary:
+async def _mock_extract(transcript_english: str, patient_context=None) -> StructuredMedicalSummary:
     """
     Tiny keyword-based stand-in for Gemini, used only so this harness can be
     exercised without an API key (e.g. in CI, or to sanity-check the scoring
@@ -140,7 +140,7 @@ async def run(mock: bool) -> None:
 
     results = []
     for case in cases:
-        predicted = extract(case["transcript_english"], {})
+        predicted = await extract(case["transcript_english"], {})
         result = _score_case(case, predicted)
         results.append(result)
         print(f"[{result['case_score']:.2f}] {result['id']}  "

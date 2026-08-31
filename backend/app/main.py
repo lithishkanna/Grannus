@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # populate os.environ from .env before Settings() reads it
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -30,25 +31,8 @@ from app.services.sarvam_stt import SarvamSTTError
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rural_care.api")
 
-app = FastAPI(
-    title="RuralCare AI — Medical Triage & Information Pipeline",
-    description=(
-        "AI processing engine: Audio Preprocessing -> Speech-to-Text (Sarvam) -> "
-        "Medical Information Extraction (Gemini) -> Safety Engine -> ML Priority Prediction"
-    ),
-    version="1.0.0",
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.on_event("startup")
-def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Pre-load ML model at startup."""
     try:
         model = get_model()
@@ -58,6 +42,17 @@ def startup_event():
             logger.warning("ML priority model not available at startup. Will use rule engine.")
     except Exception as exc:
         logger.warning("Failed to initialize ML model at startup: %s", exc)
+    yield
+
+app = FastAPI(
+    title="RuralCare AI — Medical Triage & Information Pipeline",
+    description=(
+        "AI processing engine: Audio Preprocessing -> Speech-to-Text (Sarvam) -> "
+        "Medical Information Extraction (Gemini) -> Safety Engine -> ML Priority Prediction"
+    ),
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")
@@ -78,6 +73,9 @@ async def process_audio(
     audio: UploadFile = File(..., description="Patient's voice recording (WAV, MP3, WEBM, etc.)"),
     language_code: str = Form(
         "unknown", description="BCP-47 code e.g. 'ta-IN', 'hi-IN', or 'unknown' to auto-detect"
+    ),
+    doctor_preferred_language: str = Form(
+        "en-IN", description="BCP-47 code for the doctor's interface language"
     ),
     age: str = Form(None, description="Optional patient age"),
     gender: str = Form(None, description="Optional patient gender"),
@@ -120,6 +118,7 @@ async def process_audio(
             filename=audio.filename or "patient_audio.wav",
             language_code=language_code,
             patient_context=patient_context,
+            doctor_preferred_language=doctor_preferred_language,
         )
         return result
 

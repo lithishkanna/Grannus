@@ -3,11 +3,20 @@ Central configuration. Reads secrets/settings from environment variables
 (populated from .env via python-dotenv). Never hardcode API keys.
 """
 from functools import lru_cache
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Anchor to the backend directory so relative model paths work regardless
+# of which directory the process is launched from.
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(_BACKEND_DIR / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # --- Sarvam AI ---
     sarvam_api_key: str = ""
@@ -30,8 +39,9 @@ class Settings(BaseSettings):
     noise_reduction_strength: float = 0.7  # 0.0 (none) to 1.0 (aggressive)
 
     # --- ML Model ---
-    ml_model_path: str = "models/priority_model.joblib"
-    ml_feature_columns_path: str = "models/feature_columns.json"
+    # Paths anchored to backend dir so the server can be launched from any cwd.
+    ml_model_path: str = str(_BACKEND_DIR / "models" / "priority_model.joblib")
+    ml_feature_columns_path: str = str(_BACKEND_DIR / "models" / "feature_columns.json")
     ml_model_enabled: bool = True  # fall back to rule-based if False or model missing
 
     # --- App ---

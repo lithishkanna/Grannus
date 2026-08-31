@@ -148,3 +148,62 @@ async def translate_questions(
             results.append((question, None))
 
     return results
+
+
+async def translate_clinical_summary_for_doctor(
+    chief_complaint: str,
+    symptoms: list,  # List of Symptom objects with .name and .negated attributes
+    red_flags: list,  # List of SafetyRedFlag objects with .reason attribute
+    doctor_language: Optional[str],
+) -> Optional[dict]:
+    """
+    Translate key clinical summary fields into the doctor's preferred language.
+    Returns a dict with translated fields, or None if translation not applicable.
+
+    Args:
+        chief_complaint: English chief complaint string.
+        symptoms: List of Symptom schema objects.
+        red_flags: List of SafetyRedFlag schema objects.
+        doctor_language: BCP-47 code for doctor's preferred language.
+
+    Returns:
+        Dict with keys: chief_complaint, symptoms_summary, red_flags_summary, language
+        or None if doctor_language is English or not supported.
+    """
+    if not _is_translatable(doctor_language):
+        return None
+
+    # Build English narrative strings to translate
+    active_symptoms = [s.name for s in symptoms if not s.negated]
+    symptoms_text = ", ".join(active_symptoms) if active_symptoms else ""
+    red_flags_text = "; ".join(rf.reason for rf in red_flags) if red_flags else ""
+
+    import asyncio
+
+    async def _maybe_translate(text: str) -> str:
+        if not text:
+            return ""
+        return await translate_text(text, doctor_language)
+
+    results = await asyncio.gather(
+        _maybe_translate(chief_complaint),
+        _maybe_translate(symptoms_text),
+        _maybe_translate(red_flags_text),
+        return_exceptions=True,
+    )
+
+    def _safe(r, fallback: str) -> Optional[str]:
+        if isinstance(r, Exception) or not r:
+            return fallback or None
+        return r if r != fallback else None
+
+    translated_cc = _safe(results[0], chief_complaint)
+    translated_sx = _safe(results[1], symptoms_text)
+    translated_rf = _safe(results[2], red_flags_text)
+
+    return {
+        "chief_complaint": translated_cc,
+        "symptoms_summary": translated_sx if active_symptoms else None,
+        "red_flags_summary": translated_rf if red_flags else None,
+        "language": doctor_language,
+    }

@@ -116,7 +116,10 @@ async def transcribe_and_translate(
         
         english_transcript = english.get("transcript", "")
         if not english_transcript.strip() and native_transcript.strip():
-            logger.warning("English transcript is empty but native transcript is not.")
+            raise SarvamSTTError(
+                "Sarvam translation returned empty English transcript even though "
+                "the native transcript succeeded. Cannot proceed with clinical extraction."
+            )
         elif english_transcript.strip() and len(english_transcript.strip()) < 5:
             logger.warning(f"English transcript is suspiciously short: '{english_transcript}'")
 

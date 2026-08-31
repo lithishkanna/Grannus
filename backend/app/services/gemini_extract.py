@@ -31,7 +31,15 @@ logger = logging.getLogger("rural_care.gemini_extract")
 class GeminiExtractionError(RuntimeError):
     pass
 
-_NEGATION_WORDS = ("don't", "do not", "doesn't", "does not", "didn't", "did not", "no ", "not ", "never", "isn't", "wasn't")
+_gemini_client: Optional["genai.Client"] = None
+
+def _get_gemini_client() -> "genai.Client":
+    """Return a cached GenAI client (one per process)."""
+    global _gemini_client
+    if _gemini_client is None:
+        settings = get_settings()
+        _gemini_client = genai.Client(api_key=settings.gemini_api_key)
+    return _gemini_client
 
 SYSTEM_INSTRUCTION = """\
 You are a clinical information EXTRACTION assistant for a rural telehealth \
@@ -160,18 +168,33 @@ def _normalize(summary: StructuredMedicalSummary) -> StructuredMedicalSummary:
                 symptom.duration.value = value
                 symptom.duration.unit = unit
 
-        # Post-hoc negation sanity check: if the model marked a symptom as
-        # negated but its own raw_text doesn't contain a negation word (or
-        # vice versa), that's a strong candidate for a mistake, not evidence
-        # to blindly trust either way — so we don't flip the value, but we
-        # do lower confidence and leave a note for the clinician.
+        # Post-hoc negation sanity check: verify that a negation word appears
+        # DIRECTLY BEFORE the symptom name in the raw text, not just anywhere.
         raw_lower = (symptom.raw_text or "").lower()
-        looks_negated = any(word in raw_lower for word in _NEGATION_WORDS)
-        if symptom.raw_text and (symptom.negated != looks_negated):
+        symptom_lower = symptom.name.lower()
+        looks_negated = False
+        if raw_lower and symptom_lower in raw_lower:
+            # Find position of symptom name and check for negation word in the
+            # 4-word window immediately before it.
+            sym_pos = raw_lower.find(symptom_lower)
+            prefix = raw_lower[:sym_pos].strip()
+            prefix_words = prefix.split()
+            last_few = " ".join(prefix_words[-4:]) if prefix_words else ""
+            _CLOSE_NEGATIONS = ("don't", "do not", "doesn't", "does not",
+                                "didn't", "did not", "not", "no", "never",
+                                "isn't", "wasn't", "have no", "don't have")
+            looks_negated = any(neg in last_few for neg in _CLOSE_NEGATIONS)
+        if symptom.raw_text and looks_negated != symptom.negated:
             symptom.confidence = min(symptom.confidence, 0.5)
-            note = f"negation mismatch for '{symptom.name}': model said negated={symptom.negated} but raw text suggests {looks_negated}"
-            summary.extraction_notes = f"{summary.extraction_notes}; {note}" if summary.extraction_notes else note
-            logger.warning("negation_check_flagged request_symptom=%r negated=%s raw_suggests=%s", symptom.name, symptom.negated, looks_negated)
+            note = (f"negation mismatch for '{symptom.name}': "
+                    f"model said negated={symptom.negated} but raw text suggests {looks_negated}")
+            summary.extraction_notes = (
+                f"{summary.extraction_notes}; {note}" if summary.extraction_notes else note
+            )
+            logger.warning(
+                "negation_check_flagged symptom=%r negated=%s raw_suggests=%s",
+                symptom.name, symptom.negated, looks_negated,
+            )
 
     return summary
 
@@ -186,7 +209,7 @@ async def extract_structured_summary(
     validation (fail loudly rather than silently passing bad data downstream).
     """
     settings = get_settings()
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = _get_gemini_client()
 
     def _call_gemini():
         return client.models.generate_content(
