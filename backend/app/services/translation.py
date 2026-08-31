@@ -201,9 +201,28 @@ async def translate_clinical_summary_for_doctor(
     translated_sx = _safe(results[1], symptoms_text)
     translated_rf = _safe(results[2], red_flags_text)
 
+    # Generate spoken voice audio in doctor's language via Sarvam TTS
+    narrative_parts = []
+    if translated_cc:
+        narrative_parts.append(translated_cc)
+    if translated_sx:
+        narrative_parts.append(f"Symptoms: {translated_sx}")
+    if translated_rf:
+        narrative_parts.append(f"Red flags: {translated_rf}")
+    
+    narrative_text = ". ".join(narrative_parts)
+    audio_base64 = None
+    if narrative_text:
+        try:
+            from app.services.sarvam_tts import text_to_speech
+            audio_base64 = await text_to_speech(narrative_text, target_language_code=doctor_language)
+        except Exception as exc:
+            logger.warning("doctor_audio_tts_failed lang=%s error=%s", doctor_language, exc)
+
     return {
         "chief_complaint": translated_cc,
         "symptoms_summary": translated_sx if active_symptoms else None,
         "red_flags_summary": translated_rf if red_flags else None,
+        "audio_base64": audio_base64,
         "language": doctor_language,
     }

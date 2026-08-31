@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     gemini_retry_attempts: int = 3
     gemini_timeout_seconds: float = 60.0
 
+    # --- Supabase ---
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+
     # --- Audio Preprocessing ---
     enable_audio_preprocessing: bool = True
     min_audio_duration_seconds: float = 1.0

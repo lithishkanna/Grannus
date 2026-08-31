@@ -338,6 +338,10 @@ class DoctorTranslatedSummary(BaseModel):
         default=None,
         description="Red flag summary translated to doctor language, if any red flags exist.",
     )
+    audio_base64: Optional[str] = Field(
+        default=None,
+        description="Base64-encoded WAV audio spoken in the doctor's preferred language (generated via TTS).",
+    )
     language: str = Field(description="BCP-47 code of the doctor's preferred language.")
 
 

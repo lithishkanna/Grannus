@@ -23,9 +23,13 @@ from app.pipeline import run_pipeline  # noqa: E402
 
 
 async def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
     parser = argparse.ArgumentParser(description="Run the RuralCare AI Day 1 pipeline on a local audio file.")
     parser.add_argument("audio_path", type=Path, help="Path to a WAV/MP3/etc. audio file")
     parser.add_argument("--language", default="unknown", help="BCP-47 code, e.g. ta-IN, hi-IN (default: auto-detect)")
+    parser.add_argument("--doctor-language", default="en-IN", help="BCP-47 code for doctor's language e.g. ta-IN, hi-IN")
     args = parser.parse_args()
 
     if not args.audio_path.exists():
@@ -39,7 +43,7 @@ async def main() -> None:
         filename=args.audio_path.name,
         language_code=args.language,
         patient_context={},
-        doctor_preferred_language="en-IN",
+        doctor_preferred_language=args.doctor_language,
     )
 
     print("\n=== TRANSCRIPTION ===")
@@ -68,10 +72,13 @@ async def main() -> None:
         print(f"  Seek doctor if: {result.home_remedy_guidance.seek_doctor_if}")
 
     if result.doctor_translated_summary:
-        print("\n=== DOCTOR TRANSLATED SUMMARY ===")
+        print("\n=== DOCTOR TRANSLATED SUMMARY & VOICE AUDIO ===")
         print(f"  Language       : {result.doctor_translated_summary.language}")
         print(f"  Chief complaint: {result.doctor_translated_summary.chief_complaint}")
         print(f"  Symptoms       : {result.doctor_translated_summary.symptoms_summary}")
+        has_audio = bool(result.doctor_translated_summary.audio_base64)
+        audio_len = len(result.doctor_translated_summary.audio_base64) if has_audio else 0
+        print(f"  Spoken Audio   : {'Generated (' + str(audio_len) + ' base64 chars)' if has_audio else 'None'}")
 
     print("\n=== FULL PIPELINE RESULT (what the API returns) ===")
     print(json.dumps(result.model_dump(), indent=2, ensure_ascii=False))

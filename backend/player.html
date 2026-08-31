@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GRANNUS Voice Output Player</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0b0b0b; color: #fff; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .card { background: #171717; border: 1px solid #262626; padding: 2rem; border-radius: 1rem; width: 500px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h2 { color: #f97316; margin-top: 0; font-size: 1.5rem; }
+        p { color: #a3a3a3; font-size: 0.95rem; line-height: 1.5; }
+        audio { width: 100%; margin-top: 1.5rem; outline: none; border-radius: 8px; }
+        .badge { background: #1f2937; color: #f97316; padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 600; display: inline-block; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <span class="badge">DOCTOR VOICE SUMMARY</span>
+        <h2>Hindi Voice Output</h2>
+        <p id="text">Loading generated Hindi text summary...</p>
+        <audio id="player" controls autoplay></audio>
+    </div>
+    <script>
+        fetch('./doctor_summary_hi.wav')
+            .then(res => res.blob())
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                document.getElementById('player').src = url;
+                document.getElementById('text').innerText = "Playing 'doctor_summary_hi.wav' (generated via Sarvam bulbul:v3)";
+            })
+            .catch(err => {
+                document.getElementById('text').innerText = "Run: python scripts/generate_doctor_audio.py to generate the file first.";
+            });
+    </script>
+</body>
+</html>
