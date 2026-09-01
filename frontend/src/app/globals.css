@@ -1,0 +1,188 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-outfit), var(--font-inter), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+
+  /* Wabi Sabi custom color tokens */
+  --color-wabi-stone-50: #faf9f7;
+  --color-wabi-stone-100: #f0ede8;
+  --color-wabi-stone-200: #e2ddd5;
+  --color-wabi-stone-300: #d0c9be;
+  --color-wabi-stone-400: #a89f91;
+  --color-wabi-stone-500: #8a8072;
+  --color-wabi-stone-600: #6b5e4f;
+  --color-wabi-stone-700: #544a3d;
+  --color-wabi-stone-800: #3d3429;
+  --color-wabi-stone-900: #2a231b;
+  --color-wabi-earth-green: #5a7247;
+  --color-wabi-clay-red: #a65d57;
+  --color-wabi-ochre: #c49a3c;
+  --color-wabi-indigo: #5b6b7a;
+  --color-wabi-moss: #7a8b6a;
+
+  --animate-gentle-fade-in: gentle-fade-in 0.6s ease-out forwards;
+  --animate-float: float 4s ease-in-out infinite;
+  --animate-ink-spread: ink-spread 0.8s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+  --animate-pulse-soft: pulse-soft 3s ease-in-out infinite;
+}
+
+:root {
+  /* Wabi Sabi Light Theme — Warm Stone */
+  --background: #faf9f7;
+  --foreground: #3d3429;
+  --card: #f5f2ed;
+  --card-foreground: #3d3429;
+  --popover: #f5f2ed;
+  --popover-foreground: #3d3429;
+  --primary: #5a7247;
+  --primary-foreground: #faf9f7;
+  --secondary: #f0ede8;
+  --secondary-foreground: #544a3d;
+  --muted: #e2ddd5;
+  --muted-foreground: #6b5e4f;
+  --accent: #f0ede8;
+  --accent-foreground: #3d3429;
+  --destructive: #a65d57;
+  --destructive-foreground: #faf9f7;
+  --border: #e2ddd5;
+  --input: #e2ddd5;
+  --ring: #5a7247;
+  --radius: 0.75rem;
+}
+
+.dark {
+  /* Wabi Sabi Dark Theme — Deep Earth */
+  --background: #1e1b17;
+  --foreground: #f0ede8;
+  --card: #2a2520;
+  --card-foreground: #f0ede8;
+  --popover: #2a2520;
+  --popover-foreground: #f0ede8;
+  --primary: #7a8b6a;
+  --primary-foreground: #1e1b17;
+  --secondary: #3d3429;
+  --secondary-foreground: #f0ede8;
+  --muted: #3d3429;
+  --muted-foreground: #a89f91;
+  --accent: #3d3429;
+  --accent-foreground: #f0ede8;
+  --destructive: #a65d57;
+  --destructive-foreground: #f0ede8;
+  --border: #3d3429;
+  --input: #3d3429;
+  --ring: #7a8b6a;
+}
+
+@keyframes gentle-fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes float {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes ink-spread {
+  0% {
+    opacity: 0;
+    transform: scale(0.95);
+    filter: blur(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    @apply tracking-tight;
+  }
+}
+
+/* Wabi Sabi Utilities */
+@layer utilities {
+  .bg-paper-grain {
+    background-image: 
+      radial-gradient(circle at center, transparent 0%, rgba(0, 0, 0, 0.02) 100%);
+  }
+
+  .shadow-ink-wash {
+    box-shadow: 
+      0 4px 20px -4px rgba(61, 52, 41, 0.08),
+      0 12px 30px -8px rgba(61, 52, 41, 0.04);
+  }
+  
+  .shadow-ink-wash-lg {
+    box-shadow: 
+      0 8px 30px -6px rgba(61, 52, 41, 0.1),
+      0 16px 40px -12px rgba(61, 52, 41, 0.06);
+  }
+
+  .rounded-organic-1 {
+    border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
+  }
+  
+  .rounded-organic-2 {
+    border-radius: 40% 60% 70% 30% / 40% 50% 60% 50%;
+  }
+  
+  .rounded-organic-3 {
+    border-radius: 50% 50% 40% 60% / 60% 40% 70% 30%;
+  }
+
+  .font-heading {
+    font-family: var(--font-heading);
+  }
+}
