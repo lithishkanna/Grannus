@@ -1,8 +1,8 @@
-# Grannus — RuralCare AI
+# Grannus 
 
 > **Bridging the healthcare and language gap between rural patients and urban doctors in India.**
 
-Grannus (RuralCare AI) is a multilingual, voice-first triage platform. Our mission is simple: allow rural patients to explain their symptoms naturally in their native regional language, and instantly provide urban doctors with structured, English-translated, medically-accurate summaries. 
+Grannus  is a multilingual, voice-first triage platform. Our mission is simple: allow rural patients to explain their symptoms naturally in their native regional language, and instantly provide urban doctors with structured, English-translated, medically-accurate summaries. 
 
 By combining cutting-edge speech-to-text, LLM-based medical extraction, safety red-flag screening, and a beautiful, calming "Wabi-Sabi" user interface, Grannus brings world-class healthcare triage to the most remote areas.
 
