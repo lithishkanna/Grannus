@@ -8,23 +8,60 @@ By combining cutting-edge speech-to-text, LLM-based medical extraction, safety r
 
 ---
 
-## 🌟 The Experience
+## 🌟 What Makes Grannus Unique
 
-We believe healthcare software shouldn't feel clinical and cold. Grannus is designed around the **Wabi-Sabi** aesthetic—embracing organic shapes, earthy stone tones, natural paper textures, and smooth micro-animations. The result is a calming, premium interface that reduces stress for both patients and healthcare workers.
+### 🫁 Acoustic Biomarker Analysis
+Unlike any other triage platform, Grannus doesn't just listen to *what* the patient says — it analyzes *how* they sound. Using real-time signal processing on the raw audio waveform, we detect:
+- **Cough frequency** — explosive energy bursts in the audio
+- **Wheezing patterns** — sustained narrow-band energy in the 100–500Hz range
+- **Breathlessness pauses** — speech gaps indicating respiratory distress
 
-### Core Pipeline
-1. **Voice Input**: Patients record their symptoms via an intuitive audio interface.
-2. **Audio Processing & STT**: Background noise is reduced, and Sarvam AI transcribes the regional language.
-3. **Medical Extraction**: Gemini intelligently extracts the chief complaint, symptoms, and duration.
-4. **Safety Guardrails**: Immediate detection of critical red flags (e.g., severe chest pain) to alert for emergency care.
-5. **Priority Engine**: A hybrid ML model assigns a triage priority (High/Medium/Low).
-6. **Doctor Dashboard**: All data flows seamlessly into a Supabase-powered dashboard for doctors to review the translated summaries.
+Even if a patient forgets to mention "I have a cough", the system will flag respiratory distress automatically from the audio alone.
+
+### 🔄 Bidirectional Voice Prescriber
+Most telemedicine tools only go one way: patient → doctor. Grannus closes the loop:
+1. The patient speaks in their dialect → AI generates an English summary for the doctor
+2. The doctor records advice in English → AI translates it back into the patient's native language and generates a **spoken voice note**
+
+This means an illiterate rural patient receives medical advice as a clear audio message in their own language — not an English PDF they can't read.
+
+### 📋 ABDM FHIR Bundling
+Grannus automatically converts every triage session into an **HL7 FHIR R4** compliant JSON bundle, ready for India's Ayushman Bharat Digital Mission (ABDM). Doctors can export patient data with one click and plug it directly into any ABDM-certified hospital EMR system.
+
+---
+
+## 🔄 Core Pipeline
+
+```text
+Patient Voice Input
+       │
+       ▼
+Audio Preprocessing (Noise Reduction)
+       │
+       ├──► Acoustic Biomarker Analysis (Cough/Wheeze/Breathlessness)
+       │
+       ▼
+Sarvam Speech-to-Text (Native + English Translation)
+       │
+       ▼
+Medical Information Extraction (Gemini LLM)
+       │
+       ▼
+Safety / Red-Flag Screening & Missing Info Detection
+       │
+       ▼
+Feature Extraction & Priority Classification Engine
+       │
+       ▼
+Doctor Review Dashboard Ready Output
+       │
+       ├──► Doctor Voice Reply → Translated Voice Note for Patient
+       └──► ABDM FHIR Export
+```
 
 ---
 
 ## 🛠️ Technology Stack
-
-We built Grannus using a modern, robust, and production-ready stack:
 
 ### Frontend
 - **Framework**: Next.js 15 (React 19)
@@ -34,26 +71,27 @@ We built Grannus using a modern, robust, and production-ready stack:
 
 ### Backend (AI Pipeline)
 - **Framework**: FastAPI (Python 3.10+)
-- **AI / LLMs**: Google Gemini API (Extraction & Translation), Sarvam Saaras (Indic Speech-to-Text)
-- **ML & Audio**: Scikit-Learn (Triage Model), noisereduce, SciPy
+- **AI / LLMs**: Google Gemini API (Extraction & Translation), Sarvam AI (Indic STT & TTS)
+- **ML & Audio**: Scikit-Learn (Triage Model), noisereduce, SciPy, NumPy
+- **Signal Processing**: Custom acoustic biomarker detection engine
 
 ### Database
 - **Provider**: Supabase (PostgreSQL)
-- **Architecture**: Enforces strict schema validations and check constraints for clinical data integrity.
+- **Standards**: ABDM-ready, FHIR R4 export capability
 
 ---
 
 ## 🚀 Getting Started
 
 ### 1. Database Setup (Supabase)
-Ensure your Supabase project is set up with the required tables (`consultations`, `pipeline_results`, `clinical_summaries`, `symptoms`, `safety_assessments`, `priority_assessments`, `follow_up_questions`).
+Ensure your Supabase project has the required tables (`consultations`, `pipeline_results`, `clinical_summaries`, `symptoms`, `safety_assessments`, `priority_assessments`, `follow_up_questions`).
 
 ### 2. Backend Setup (FastAPI)
 ```bash
 cd backend
 python -m venv venv
-# On Windows: .\venv\Scripts\activate
-# On Mac/Linux: source venv/bin/activate
+# Windows: .\venv\Scripts\activate
+# Mac/Linux: source venv/bin/activate
 pip install -r requirements.txt
 ```
 Create a `.env` file in the `backend/` directory:

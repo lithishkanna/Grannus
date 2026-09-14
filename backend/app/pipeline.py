@@ -13,11 +13,14 @@ Complete AI Processing Pipeline for RuralCare AI:
 9. Final Structured Output (PipelineResult)
 """
 import asyncio
+import io
 import logging
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
+import soundfile as sf
+
 
 from app.audio_preprocessing import (
     AudioFormatError,
@@ -26,6 +29,8 @@ from app.audio_preprocessing import (
     AudioTooShortError,
     preprocess_audio,
 )
+from app.acoustic_biomarkers import analyze_audio
+
 from app.config import get_settings
 from app.feature_extraction import extract_features
 from app.missing_info import generate_missing_information, get_follow_up_questions
@@ -119,6 +124,29 @@ async def run_pipeline(
     safe_filename = Path(filename).stem + ".wav"
 
     # -------------------------------------------------------------------------
+    # Stage 1.5: Acoustic Biomarkers
+    # -------------------------------------------------------------------------
+    t0 = time.perf_counter()
+    biomarker_result = None
+    try:
+        # Load audio bytes back into numpy array
+        audio_array, sample_rate = sf.read(io.BytesIO(clean_bytes))
+        biomarker_result = analyze_audio(audio_array, sample_rate)
+        pipeline_stages["acoustic_biomarkers"] = {
+            "status": "success",
+            "duration_ms": round((time.perf_counter() - t0) * 1000, 2),
+            "score": biomarker_result.respiratory_distress_score,
+            "distress_level": biomarker_result.distress_level
+        }
+    except Exception as exc:
+        logger.warning("Acoustic biomarker analysis failed: %s", exc)
+        pipeline_stages["acoustic_biomarkers"] = {
+            "status": "error",
+            "error": str(exc),
+            "duration_ms": round((time.perf_counter() - t0) * 1000, 2),
+        }
+
+    # -------------------------------------------------------------------------
     # Stage 2: Speech-to-Text (Sarvam API)
     # -------------------------------------------------------------------------
     t0 = time.perf_counter()
@@ -166,7 +194,7 @@ async def run_pipeline(
     # Stage 4: Safety / Red-Flag Engine (Deterministic)
     # -------------------------------------------------------------------------
     t0 = time.perf_counter()
-    safety_screening = screen_safety(structured_summary)
+    safety_screening = screen_safety(structured_summary, biomarkers=biomarker_result)
     pipeline_stages["safety"] = {
         "status": "success",
         "duration_ms": round((time.perf_counter() - t0) * 1000, 2),
@@ -344,4 +372,5 @@ async def run_pipeline(
         doctor_translated_summary=doctor_translated_summary,
         audio_preprocessing=prep_result,
         pipeline_stages=pipeline_stages,
+        acoustic_biomarkers=biomarker_result,
     )

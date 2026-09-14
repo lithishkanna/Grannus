@@ -80,7 +80,7 @@ def assess_priority(
     """
     patient_context = patient_context or {}
 
-    # 1. Run safety screening if not provided
+   
     if safety_screening is None:
         safety_screening = screen_safety(summary)
 

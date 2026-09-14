@@ -9,6 +9,8 @@ import { SafetyFlags } from '@/components/results/safety-flags';
 import { TranscriptView } from '@/components/results/transcript-view';
 import { TranslationCard } from '@/components/results/translation-card';
 import { HomeRemedy } from '@/components/results/home-remedy';
+import { AcousticBiomarkerCard } from '@/components/results/acoustic-biomarker-card';
+import { FhirExportButton } from '@/components/dashboard/fhir-export-button';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Plus } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -68,7 +70,7 @@ function ResultsContent() {
     );
   }
 
-  const { patient_input, clinical_summary, safety_screening, priority, doctor_translated_summary, home_remedy_guidance } = result;
+  const { patient_input, clinical_summary, safety_screening, priority, doctor_translated_summary, home_remedy_guidance, acoustic_biomarkers } = result;
   const hasCriticalFlags = safety_screening.red_flags.some((f: any) => f.severity === 'critical');
 
   return (
@@ -108,6 +110,13 @@ function ResultsContent() {
         {priority.level === 'LOW' && home_remedy_guidance && (
           <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }}>
             <HomeRemedy data={home_remedy_guidance} />
+          </motion.section>
+        )}
+
+        {/* Acoustic Biomarkers */}
+        {acoustic_biomarkers && acoustic_biomarkers.distress_level !== 'none' && (
+          <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.15 }}>
+            <AcousticBiomarkerCard data={acoustic_biomarkers} />
           </motion.section>
         )}
 

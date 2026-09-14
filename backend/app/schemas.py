@@ -239,6 +239,16 @@ class AudioPreprocessingResult(BaseModel):
     quality_warning: Optional[str] = Field(default=None, description="Warning if audio quality is poor.")
 
 
+class AcousticBiomarkerResult(BaseModel):
+    cough_count: int
+    wheeze_detected: bool
+    wheeze_ratio: float = Field(ge=0.0, le=1.0)
+    breathlessness_pauses: int
+    speech_dyspnea_index: float = Field(ge=0.0, le=1.0)
+    respiratory_distress_score: float = Field(ge=0.0, le=1.0)
+    distress_level: str
+
+
 # ---------------------------------------------------------------------------
 # Final pipeline output — matches doctor dashboard API contract
 # ---------------------------------------------------------------------------
@@ -345,6 +355,17 @@ class DoctorTranslatedSummary(BaseModel):
     language: str = Field(description="BCP-47 code of the doctor's preferred language.")
 
 
+class VoicePrescriptionResponse(BaseModel):
+    """
+    Response model for the doctor's voice prescription endpoint.
+    """
+    english_text: str = Field(description="The transcribed English text of the doctor's advice.")
+    translated_text: str = Field(description="The translated text in the patient's language.")
+    patient_audio_base64: Optional[str] = Field(default=None, description="Base64-encoded WAV audio spoken in the patient's language.")
+    patient_language: str = Field(description="BCP-47 code of the patient's language.")
+    consultation_id: Optional[str] = Field(default=None, description="Optional consultation ID to link this prescription.")
+
+
 class PipelineResult(BaseModel):
     """
     Final output: everything downstream layers (dashboard, triage queue) consume.
@@ -395,4 +416,7 @@ class PipelineResult(BaseModel):
     )
     pipeline_stages: Optional[Dict[str, Any]] = Field(
         default=None, description="Per-stage timing and status for debugging."
+    )
+    acoustic_biomarkers: Optional[AcousticBiomarkerResult] = Field(
+        default=None, description="Acoustic biomarker analysis results (cough, wheeze, breathlessness detection)."
     )

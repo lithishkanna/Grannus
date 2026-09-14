@@ -6,6 +6,7 @@ Endpoints:
 - POST /api/v1/pipeline/process-audio — Audio triage pipeline
 """
 import logging
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -24,9 +25,11 @@ from app.audio_preprocessing import (
 from app.config import get_settings
 from app.ml_model import get_model
 from app.pipeline import run_pipeline
-from app.schemas import PipelineResult
+from app.schemas import PipelineResult, VoicePrescriptionResponse
 from app.services.gemini_extract import GeminiExtractionError
-from app.services.sarvam_stt import SarvamSTTError
+from app.services.sarvam_stt import SarvamSTTError, transcribe_and_translate
+from app.services.translation import translate_text
+from app.services.sarvam_tts import text_to_speech
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rural_care.api")
@@ -157,3 +160,83 @@ async def process_audio(
     except Exception as exc:
         logger.exception("Unexpected pipeline failure")
         raise HTTPException(status_code=500, detail=f"Pipeline processing failed: {exc}") from exc
+
+
+@app.post("/api/v1/doctor/voice-prescription", response_model=VoicePrescriptionResponse)
+async def voice_prescription(
+    audio: UploadFile = File(..., description="Doctor's spoken advice recording (WAV/WEBM)"),
+    patient_language: str = Form(..., description="The patient's language BCP-47 code (e.g., 'ta-IN', 'hi-IN')"),
+    consultation_id: Optional[str] = Form(None, description="Optional consultation ID to link this to")
+) -> VoicePrescriptionResponse:
+    """
+    Process doctor's voice prescription.
+    """
+    settings = get_settings()
+    if not settings.sarvam_api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Server configuration error: missing SARVAM_API_KEY.",
+        )
+
+    audio_bytes = await audio.read()
+
+    if not audio_bytes or len(audio_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty audio file uploaded.")
+
+    try:
+        # 1. Transcribe doctor's English audio -> get English text
+        transcription_result = await transcribe_and_translate(
+            audio_bytes=audio_bytes,
+            filename=audio.filename or "doctor_audio.wav",
+            language_code="en-IN"
+        )
+        english_text = transcription_result.transcript_english
+        
+        if not english_text:
+            raise HTTPException(status_code=400, detail="Could not transcribe audio to text.")
+
+        # 2. Translate English text -> patient's language text
+        translated_text = await translate_text(
+            text=english_text,
+            target_language=patient_language,
+            source_language="en-IN"
+        )
+
+        # 3. Synthesize the translated text -> base64 WAV audio in patient's language
+        patient_audio_base64 = await text_to_speech(
+            text=translated_text,
+            target_language_code=patient_language,
+            speaker="kavya"
+        )
+
+        return VoicePrescriptionResponse(
+            english_text=english_text,
+            translated_text=translated_text,
+            patient_audio_base64=patient_audio_base64,
+            patient_language=patient_language,
+            consultation_id=consultation_id
+        )
+
+    except SarvamSTTError as exc:
+        logger.error("Speech-to-text failure: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Speech-to-Text service error: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Unexpected voice prescription failure")
+        raise HTTPException(status_code=500, detail=f"Voice prescription processing failed: {exc}") from exc
+
+
+@app.post("/api/v1/export/fhir")
+async def export_fhir(result: PipelineResult) -> dict:
+    from app.fhir_bundle import generate_fhir_bundle
+    try:
+        bundle = generate_fhir_bundle(
+            request_id=result.request_id,
+            patient_input=result.patient_input,
+            clinical_summary=result.clinical_summary,
+            safety_screening=result.safety_screening,
+            priority=result.priority,
+        )
+        return bundle
+    except Exception as exc:
+        logger.exception("Failed to generate FHIR bundle")
+        raise HTTPException(status_code=500, detail=f"Failed to generate FHIR bundle: {exc}") from exc

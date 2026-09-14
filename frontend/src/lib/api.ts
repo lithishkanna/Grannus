@@ -112,6 +112,16 @@ export interface SafetyScreeningOutput {
   follow_up_questions: string[]
 }
 
+export interface AcousticBiomarkerResult {
+  cough_count: number
+  wheeze_detected: boolean
+  wheeze_ratio: number
+  breathlessness_pauses: number
+  speech_dyspnea_index: number
+  respiratory_distress_score: number
+  distress_level: 'none' | 'mild' | 'moderate' | 'severe'
+}
+
 export interface PipelineResult {
   request_id: string
   patient_input: PatientInput
@@ -123,8 +133,17 @@ export interface PipelineResult {
   disclaimer: string
   home_remedy_guidance: HomeRemedyGuidance | null
   doctor_translated_summary: DoctorTranslatedSummary | null
+  acoustic_biomarkers: AcousticBiomarkerResult | null
   audio_preprocessing: Record<string, unknown> | null
   pipeline_stages: Record<string, unknown> | null
+}
+
+export interface VoicePrescriptionResponse {
+  english_text: string
+  translated_text: string
+  patient_audio_base64: string | null
+  patient_language: string
+  consultation_id: string | null
 }
 
 export const SUPPORTED_LANGUAGES = [
@@ -174,3 +193,49 @@ export async function processAudio(params: {
 
   return response.json();
 }
+
+/**
+ * Send doctor's voice recording to be translated and synthesized
+ * into the patient's native language as a voice note.
+ */
+export async function sendVoicePrescription(params: {
+  audio: Blob;
+  patient_language: string;
+  consultation_id?: string;
+}): Promise<VoicePrescriptionResponse> {
+  const formData = new FormData();
+  formData.append('audio', params.audio, 'doctor_advice.webm');
+  formData.append('patient_language', params.patient_language);
+  if (params.consultation_id) formData.append('consultation_id', params.consultation_id);
+
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const response = await fetch(`${baseUrl}/api/v1/doctor/voice-prescription`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Voice Prescription API Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Export a pipeline result as an ABDM-compliant FHIR R4 JSON bundle.
+ */
+export async function exportFhirBundle(result: PipelineResult): Promise<Record<string, unknown>> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const response = await fetch(`${baseUrl}/api/v1/export/fhir`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(result),
+  });
+
+  if (!response.ok) {
+    throw new Error(`FHIR Export API Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+

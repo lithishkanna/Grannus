@@ -2,6 +2,8 @@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { PriorityBadge } from '@/components/results/priority-badge';
+import { VoiceReplyRecorder } from '@/components/dashboard/voice-reply-recorder';
+import { FhirExportButton } from '@/components/dashboard/fhir-export-button';
 import { ArrowRight, Languages } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -18,6 +20,7 @@ export function DetailDrawer({
   if (!consultation) return null;
 
   const res = consultation.result;
+  const patientLang = res.patient_input?.language || 'hi-IN';
   
   return (
     <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -58,6 +61,15 @@ export function DetailDrawer({
               ))}
             </ul>
           </div>
+
+          {/* Voice Reply to Patient */}
+          <VoiceReplyRecorder 
+            patientLanguage={patientLang} 
+            consultationId={consultation.id} 
+          />
+
+          {/* FHIR Export */}
+          {res && <FhirExportButton result={res} />}
           
           <Button 
             className="w-full rounded-full gap-2 mt-4 bg-primary text-primary-foreground hover:bg-primary/90"

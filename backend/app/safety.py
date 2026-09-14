@@ -1,12 +1,15 @@
 import logging
-from typing import List, Tuple
+
 
 from app.schemas import (
     StructuredMedicalSummary,
     SafetyScreening,
     SafetyRedFlag,
     Severity,
+    AcousticBiomarkerResult,
 )
+from typing import List, Tuple, Optional
+
 
 logger = logging.getLogger('rural_care.safety')
 
@@ -49,7 +52,7 @@ RED_FLAG_RULES: List[Tuple[List[str], bool, str, str, str]] = [
     (["dehydration"], True, "high", "clinician_review", "Severe dehydration reported"),
 ]
 
-def screen_safety(summary: StructuredMedicalSummary) -> SafetyScreening:
+def screen_safety(summary: StructuredMedicalSummary, biomarkers: Optional[AcousticBiomarkerResult] = None) -> SafetyScreening:
     """
     Evaluates the structured medical summary for predefined red flags.
     This process is deterministic and does not rely on LLM judgements.
@@ -143,6 +146,17 @@ def screen_safety(summary: StructuredMedicalSummary) -> SafetyScreening:
             if has_critical:
                 continue
         final_flags.append(f)
+
+    # Add biomarker-driven flags
+    if biomarkers and biomarkers.respiratory_distress_score >= 0.6:
+        biomarker_severity = "critical" if biomarkers.respiratory_distress_score >= 0.8 else "high"
+        final_flags.append(SafetyRedFlag(
+            potential_red_flag=True,
+            symptom='respiratory_distress_acoustic',
+            reason='Respiratory distress detected from audio analysis (coughing/wheezing/breathlessness)',
+            action='clinician_review',
+            severity=biomarker_severity
+        ))
 
     # 3. Missing critical info
     if has_chest_pain and not has_breathing_info:

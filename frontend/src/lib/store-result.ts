@@ -47,8 +47,8 @@ export async function storeResultToSupabase(result: PipelineResult, doctorId: st
         consultation_id: consultationId,
         chief_complaint: result.clinical_summary.chief_complaint,
         relevant_history: relevantHistory || null,
-        doctor_translated_summary: result.translation || null,
-        home_remedy_guidance: result.home_remedy || null
+        doctor_translated_summary: result.doctor_translated_summary || null,
+        home_remedy_guidance: result.home_remedy_guidance || null
       });
 
     if (csError) throw csError;
@@ -59,7 +59,7 @@ export async function storeResultToSupabase(result: PipelineResult, doctorId: st
         consultation_id: consultationId,
         name: s.name,
         severity: s.severity,
-        duration_value: s.duration?.value ? parseInt(s.duration.value) : null,
+        duration_value: s.duration?.value ? parseInt(String(s.duration.value)) : null,
         duration_unit: s.duration?.unit || null,
         body_location: s.body_location,
         is_negated: s.negated
