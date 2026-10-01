@@ -11,6 +11,7 @@ import { TranslationCard } from '@/components/results/translation-card';
 import { HomeRemedy } from '@/components/results/home-remedy';
 import { AcousticBiomarkerCard } from '@/components/results/acoustic-biomarker-card';
 import { FhirExportButton } from '@/components/dashboard/fhir-export-button';
+import { VoiceReplyRecorder } from '@/components/dashboard/voice-reply-recorder';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Plus } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -88,7 +89,10 @@ function ResultsContent() {
             </div>
           </div>
           
-          <div className="flex items-center gap-3 w-full md:w-auto">
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+            <div className="w-full sm:w-auto">
+              <FhirExportButton result={result} />
+            </div>
             <Button variant="outline" className="flex-1 md:flex-none gap-2 rounded-full border-border bg-background" onClick={() => router.push('/dashboard')}>
               <ArrowLeft className="w-4 h-4" /> Dashboard
             </Button>
@@ -113,8 +117,16 @@ function ResultsContent() {
           </motion.section>
         )}
 
+        {/* Doctor Voice Reply to Patient */}
+        <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.12 }}>
+          <VoiceReplyRecorder 
+            patientLanguage={patient_input.language || 'hi-IN'} 
+            consultationId={id || undefined} 
+          />
+        </motion.section>
+
         {/* Acoustic Biomarkers */}
-        {acoustic_biomarkers && acoustic_biomarkers.distress_level !== 'none' && (
+        {acoustic_biomarkers && (
           <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.15 }}>
             <AcousticBiomarkerCard data={acoustic_biomarkers} />
           </motion.section>

@@ -2,6 +2,7 @@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { PriorityBadge } from '@/components/results/priority-badge';
+import { AcousticBiomarkerCard } from '@/components/results/acoustic-biomarker-card';
 import { VoiceReplyRecorder } from '@/components/dashboard/voice-reply-recorder';
 import { FhirExportButton } from '@/components/dashboard/fhir-export-button';
 import { ArrowRight, Languages } from 'lucide-react';
@@ -61,6 +62,11 @@ export function DetailDrawer({
               ))}
             </ul>
           </div>
+
+          {/* Acoustic Biomarkers if present */}
+          {res.acoustic_biomarkers && (
+            <AcousticBiomarkerCard data={res.acoustic_biomarkers} />
+          )}
 
           {/* Voice Reply to Patient */}
           <VoiceReplyRecorder 
