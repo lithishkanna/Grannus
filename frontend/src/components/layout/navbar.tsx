@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Home, Mic, LayoutDashboard, Menu } from 'lucide-react';
+import { Home, Mic, LayoutDashboard, Menu, ShieldCheck } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 
 export function Navbar() {
@@ -12,6 +12,7 @@ export function Navbar() {
     { href: '/', label: 'Home', icon: Home },
     { href: '/input', label: 'Voice Input', icon: Mic },
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/login', label: 'Clinician Login', icon: ShieldCheck },
   ];
 
   return (

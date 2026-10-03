@@ -18,7 +18,7 @@ def generate_fhir_bundle(
     patient_uuid = str(uuid.uuid4())
     encounter_uuid = str(uuid.uuid4())
     
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     bundle: Dict[str, Any] = {
         "resourceType": "Bundle",
@@ -30,6 +30,33 @@ def generate_fhir_bundle(
         },
         "entry": []
     }
+
+    # 0. Composition Resource (Required by ABDM profile for Clinical Artifacts)
+    comp_uuid = str(uuid.uuid4())
+    comp_resource = {
+        "resourceType": "Composition",
+        "id": comp_uuid,
+        "status": "final",
+        "type": {
+            "coding": [
+                {
+                    "system": "https://projectndhm.in/fhir/ndhm/CodeSystem/ndhm-record-type",
+                    "code": "OPConsultationRecord",
+                    "display": "OP Consultation Record"
+                }
+            ],
+            "text": "RuralCare AI Clinical Triage Summary"
+        },
+        "subject": {
+            "reference": f"urn:uuid:{patient_uuid}"
+        },
+        "date": timestamp,
+        "title": "Clinical Triage and Safety Screening",
+    }
+    bundle["entry"].append({
+        "fullUrl": f"urn:uuid:{comp_uuid}",
+        "resource": comp_resource
+    })
 
     # 1. Patient Resource
     patient_resource = {

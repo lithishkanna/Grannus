@@ -10,7 +10,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react';
+import { ConsentDialog } from '@/components/voice/consent-dialog';
 
 export default function VoiceInputPage() {
   const router = useRouter();
@@ -18,6 +19,10 @@ export default function VoiceInputPage() {
   const [language, setLanguage] = useState('unknown');
   const [doctorLanguage, setDoctorLanguage] = useState('en-IN');
   
+  // DPDP Consent state
+  const [showConsentModal, setShowConsentModal] = useState(false);
+  const [consentApproved, setConsentApproved] = useState(false);
+
   // Optional context
   const [showContext, setShowContext] = useState(false);
   const [age, setAge] = useState('');
@@ -29,12 +34,9 @@ export default function VoiceInputPage() {
   const [isClient, setIsClient] = useState(false);
   useEffect(() => { setIsClient(true); }, []);
 
-  const handleSubmit = async () => {
-    if (!audioBlob) return;
-    
-    // Convert Blob to base64 to store in sessionStorage
+  const executePipelineSubmission = (blobToSubmit: Blob) => {
     const reader = new FileReader();
-    reader.readAsDataURL(audioBlob);
+    reader.readAsDataURL(blobToSubmit);
     reader.onloadend = () => {
       const base64Audio = reader.result as string;
       const payload = {
@@ -45,12 +47,30 @@ export default function VoiceInputPage() {
         gender,
         reported_duration: duration,
         known_conditions: conditions,
-        current_medications: medications
+        current_medications: medications,
+        dpdp_consent_verified: true,
       };
       
       sessionStorage.setItem('grannus_pipeline_payload', JSON.stringify(payload));
       router.push('/processing');
     };
+  };
+
+  const handleProcessClick = () => {
+    if (!audioBlob) return;
+    if (!consentApproved) {
+      setShowConsentModal(true);
+      return;
+    }
+    executePipelineSubmission(audioBlob);
+  };
+
+  const handleConsentAffirmed = () => {
+    setConsentApproved(true);
+    setShowConsentModal(false);
+    if (audioBlob) {
+      executePipelineSubmission(audioBlob);
+    }
   };
 
   if (!isClient) return null; // Avoid hydration mismatch for tabs
@@ -166,17 +186,29 @@ export default function VoiceInputPage() {
           </AnimatePresence>
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-border">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>DPDP Act 2023 Compliant • 72h Audio Retention • 108/112 Emergency Referral</span>
+          </div>
+
           <Button 
             size="lg" 
-            className="w-full md:w-auto px-10 h-12 rounded-full text-base font-medium shadow-md transition-transform active:scale-95"
+            className="w-full sm:w-auto px-10 h-12 rounded-full text-base font-medium shadow-md transition-transform active:scale-95"
             disabled={!audioBlob}
-            onClick={handleSubmit}
+            onClick={handleProcessClick}
           >
             Process Audio
           </Button>
         </div>
       </div>
+
+      <ConsentDialog
+        isOpen={showConsentModal}
+        selectedLanguage={language}
+        onConsentGiven={handleConsentAffirmed}
+        onConsentDenied={() => setShowConsentModal(false)}
+      />
     </div>
   );
 }

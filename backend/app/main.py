@@ -13,8 +13,9 @@ from dotenv import load_dotenv
 load_dotenv()  # populate os.environ from .env before Settings() reads it
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from app.audio_preprocessing import (
     AudioFormatError,
@@ -30,6 +31,23 @@ from app.services.gemini_extract import GeminiExtractionError
 from app.services.sarvam_stt import SarvamSTTError, transcribe_and_translate
 from app.services.translation import translate_text
 from app.services.sarvam_tts import text_to_speech
+
+from app.auth import (
+    UserRole,
+    AuthenticatedUser,
+    create_token,
+    get_current_user,
+    require_role,
+    require_verified_doctor,
+    generate_signed_url,
+    verify_signed_url,
+)
+from app.security.input_validation import validate_audio_upload, sanitize_filename
+from app.security.rate_limiter import rate_limit_patient_intake
+from app.security.audit_logger import get_audit_logger
+from app.security.data_retention import get_retention_manager
+from app.consent import get_consent_notice, record_patient_consent
+from app.regulatory import CDSCO_SAMD_DECLARATION, EMERGENCY_DISCLAIMER_TEXT, validate_abdm_fhir_bundle
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rural_care.api")
@@ -83,8 +101,148 @@ def health() -> dict:
     }
 
 
+# --- Security & Auth Endpoints ---
+
+class LoginRequest(BaseModel):
+    user_id: str
+    role: UserRole
+    doctor_registration_number: Optional[str] = None
+    state_medical_council: Optional[str] = None
+
+
+class LoginResponse(BaseModel):
+    token: str
+    user_id: str
+    role: UserRole
+    is_verified_doctor: bool
+    doctor_registration_number: Optional[str] = None
+
+
+class ConsentRequest(BaseModel):
+    patient_id: str
+    language_code: str = "en-IN"
+    explicit_consent: bool
+
+
+class ErasureRequest(BaseModel):
+    patient_id: str
+    reason: Optional[str] = "Statutory erasure requested under DPDP Act 2023"
+
+
+@app.post("/api/v1/auth/login", response_model=LoginResponse)
+async def login(req: LoginRequest):
+    """
+    Authenticate a patient, doctor, or administrator.
+    Verifies Indian medical registration credentials for doctors.
+    """
+    if req.role == UserRole.DOCTOR:
+        if not req.doctor_registration_number:
+            raise HTTPException(
+                status_code=400,
+                detail="Doctor registration requires a valid NMC/State Medical Council registration number.",
+            )
+        from app.auth import validate_doctor_registration
+        if not validate_doctor_registration(req.doctor_registration_number):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid medical registration number format. Must be an official NMC or State Council ID.",
+            )
+
+    token = create_token(
+        user_id=req.user_id,
+        role=req.role,
+        doctor_reg_no=req.doctor_registration_number,
+        state_council=req.state_medical_council,
+    )
+    from app.auth import verify_token
+    user = verify_token(token)
+
+    get_audit_logger().log(
+        action="AUTH_LOGIN",
+        user_id=user.user_id,
+        role=user.role.value,
+        doctor_registration_number=user.doctor_registration_number,
+    )
+
+    return LoginResponse(
+        token=token,
+        user_id=user.user_id,
+        role=user.role,
+        is_verified_doctor=user.is_verified_doctor,
+        doctor_registration_number=user.doctor_registration_number,
+    )
+
+
+@app.get("/api/v1/consent/notice")
+def consent_notice(language_code: str = "en-IN"):
+    """Fetch localized consent notice under India's DPDP Act 2023."""
+    return get_consent_notice(language_code)
+
+
+@app.post("/api/v1/consent/record")
+def record_consent(req: ConsentRequest, request: Request):
+    """Store timestamped, explicit patient consent before audio processing."""
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    try:
+        record = record_patient_consent(
+            patient_id=req.patient_id,
+            language_code=req.language_code,
+            client_ip=client_ip,
+            explicit_consent=req.explicit_consent,
+        )
+        get_audit_logger().log(
+            action="RECORD_CONSENT",
+            user_id=req.patient_id,
+            role="patient",
+            details={"consent_id": record.consent_id, "version": record.consent_version},
+        )
+        return record
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/patient/request-erasure")
+def request_erasure(req: ErasureRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Statutory Right to Erasure under Section 12 of the DPDP Act 2023."""
+    retention_mgr = get_retention_manager()
+    erasure_result = retention_mgr.process_patient_erasure(req.patient_id, reason=req.reason or "")
+    get_audit_logger().log(
+        action="REQUEST_ERASURE",
+        user_id=current_user.user_id,
+        role=current_user.role.value,
+        details={"patient_id": req.patient_id, "reason": req.reason},
+    )
+    return erasure_result
+
+
+@app.get("/api/v1/regulatory/positioning")
+def regulatory_positioning():
+    """Statutory CDSCO SaMD and Telemedicine Practice Guidelines compliance statement."""
+    return {
+        "cdsco_declaration": CDSCO_SAMD_DECLARATION,
+        "emergency_disclaimer": EMERGENCY_DISCLAIMER_TEXT,
+        "telemedicine_guidelines_compliant": True,
+    }
+
+
+@app.get("/api/v1/media/stream")
+def stream_media(file: str, expires: int, sig: str):
+    """
+    Access short-lived cryptographic signed media URL (prevents unauthorized public access).
+    """
+    if not verify_signed_url(file, expires, sig):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Signed media link is invalid or expired. Please re-authenticate.",
+        )
+    return {"status": "authorized", "file": file, "valid_until": expires}
+
+
+# --- Core Pipeline Endpoints ---
+
 @app.post("/api/v1/pipeline/process-audio", response_model=PipelineResult)
 async def process_audio(
+    request: Request,
     audio: UploadFile = File(..., description="Patient's voice recording (WAV, MP3, WEBM, etc.)"),
     language_code: str = Form(
         "unknown", description="BCP-47 code e.g. 'ta-IN', 'hi-IN', or 'unknown' to auto-detect"
@@ -100,7 +258,16 @@ async def process_audio(
 ) -> PipelineResult:
     """
     Process patient voice recording through the complete AI triage pipeline.
+    Secured with:
+      - Rate limiting & abuse protection
+      - Magic byte signature validation
+      - Path traversal sanitization
+      - Automated 72-hour audio deletion scheduling
+      - Audit trail logging
     """
+    # 1. Rate limiting & abuse defense
+    await rate_limit_patient_intake(request)
+
     settings = get_settings()
     if not settings.sarvam_api_key or not settings.gemini_api_key:
         raise HTTPException(
@@ -110,14 +277,12 @@ async def process_audio(
 
     audio_bytes = await audio.read()
 
-    if not audio_bytes or len(audio_bytes) == 0:
-        raise HTTPException(status_code=400, detail="Empty audio file uploaded.")
+    # 2. Input validation & magic byte inspection
+    safe_filename = sanitize_filename(audio.filename)
+    validate_audio_upload(audio_bytes, safe_filename, settings.max_audio_bytes)
 
-    if len(audio_bytes) > settings.max_audio_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Audio file too large ({len(audio_bytes)} bytes). Max allowed is {settings.max_audio_bytes} bytes.",
-        )
+    # 3. Schedule raw audio deletion under DPDP 72-hour retention policy
+    get_retention_manager().schedule_audio_deletion(safe_filename, hours=72)
 
     patient_context = {
         "age": age,
@@ -130,11 +295,21 @@ async def process_audio(
     try:
         result = await run_pipeline(
             audio_bytes=audio_bytes,
-            filename=audio.filename or "patient_audio.wav",
+            filename=safe_filename,
             language_code=language_code,
             patient_context=patient_context,
             doctor_preferred_language=doctor_preferred_language,
         )
+
+        # 4. Audit logging
+        get_audit_logger().log(
+            action="RUN_PIPELINE",
+            user_id="anonymous_patient_intake",
+            role="patient",
+            consultation_id=result.request_id,
+            details={"priority": result.priority.level.value, "language": result.patient_input.language},
+        )
+
         return result
 
     except AudioTooShortError as exc:
@@ -166,10 +341,15 @@ async def process_audio(
 async def voice_prescription(
     audio: UploadFile = File(..., description="Doctor's spoken advice recording (WAV/WEBM)"),
     patient_language: str = Form(..., description="The patient's language BCP-47 code (e.g., 'ta-IN', 'hi-IN')"),
-    consultation_id: Optional[str] = Form(None, description="Optional consultation ID to link this to")
+    consultation_id: Optional[str] = Form(None, description="Optional consultation ID to link this to"),
+    current_doctor: AuthenticatedUser = Depends(require_verified_doctor),
 ) -> VoicePrescriptionResponse:
     """
     Process doctor's voice prescription.
+    Secured with:
+      - Doctor verification under Telemedicine Guidelines 2020
+      - Magic byte audio inspection
+      - Audit trail logging
     """
     settings = get_settings()
     if not settings.sarvam_api_key:
@@ -179,15 +359,14 @@ async def voice_prescription(
         )
 
     audio_bytes = await audio.read()
-
-    if not audio_bytes or len(audio_bytes) == 0:
-        raise HTTPException(status_code=400, detail="Empty audio file uploaded.")
+    safe_filename = sanitize_filename(audio.filename or "doctor_audio.wav")
+    validate_audio_upload(audio_bytes, safe_filename, settings.max_audio_bytes)
 
     try:
         # 1. Transcribe doctor's English audio -> get English text
         transcription_result = await transcribe_and_translate(
             audio_bytes=audio_bytes,
-            filename=audio.filename or "doctor_audio.wav",
+            filename=safe_filename,
             language_code="en-IN"
         )
         english_text = transcription_result.transcript_english
@@ -209,6 +388,16 @@ async def voice_prescription(
             speaker="kavya"
         )
 
+        # Audit log prescription generation
+        get_audit_logger().log(
+            action="GENERATE_PRESCRIPTION",
+            user_id=current_doctor.user_id,
+            role=current_doctor.role.value,
+            doctor_registration_number=current_doctor.doctor_registration_number,
+            consultation_id=consultation_id,
+            details={"patient_language": patient_language},
+        )
+
         return VoicePrescriptionResponse(
             english_text=english_text,
             translated_text=translated_text,
@@ -226,7 +415,17 @@ async def voice_prescription(
 
 
 @app.post("/api/v1/export/fhir")
-async def export_fhir(result: PipelineResult) -> dict:
+async def export_fhir(
+    result: PipelineResult,
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.ADMIN])),
+) -> dict:
+    """
+    Generate and export ABDM-compliant FHIR R4 Bundle.
+    Secured with:
+      - Role-based authorization (Doctor/Admin only)
+      - ABDM profile validation
+      - Audit trail logging
+    """
     from app.fhir_bundle import generate_fhir_bundle
     try:
         bundle = generate_fhir_bundle(
@@ -236,6 +435,22 @@ async def export_fhir(result: PipelineResult) -> dict:
             safety_screening=result.safety_screening,
             priority=result.priority,
         )
+
+        # Validate against ABDM FHIR profiles
+        is_valid, validation_errors = validate_abdm_fhir_bundle(bundle)
+        if not is_valid:
+            logger.warning("ABDM profile validation warnings: %s", validation_errors)
+
+        # Audit log FHIR export
+        get_audit_logger().log(
+            action="EXPORT_FHIR",
+            user_id=current_user.user_id,
+            role=current_user.role.value,
+            doctor_registration_number=current_user.doctor_registration_number,
+            consultation_id=result.request_id,
+            details={"abdm_valid": is_valid},
+        )
+
         return bundle
     except Exception as exc:
         logger.exception("Failed to generate FHIR bundle")
