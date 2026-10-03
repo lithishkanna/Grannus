@@ -407,6 +407,19 @@ async def run_pipeline(
         if stt_failed or extraction_failed:
             priority.model_used = "fail_to_review"
 
+    # Record prediction in drift monitor for distribution shift tracking
+    try:
+        from app.drift_monitor import get_drift_monitor
+        get_drift_monitor().record_prediction(
+            request_id=request_id,
+            priority_level=priority.level.value,
+            confidence=priority.confidence,
+            features=features,
+            language=effective_lang,
+        )
+    except Exception as exc:
+        logger.debug("Drift monitoring record skipped: %s", exc)
+
     pipeline_stages["priority"] = {
         "status": "success",
         "duration_ms": round((time.perf_counter() - t0) * 1000, 2),
