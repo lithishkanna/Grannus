@@ -215,13 +215,20 @@ INDIC_RED_FLAG_RULES: List[Tuple[List[str], bool, str, str, str]] = [
 _NEGATION_PATTERNS = [
     # English negations
     r"\b(?:no|not|don't|dont|does\s*not|doesn't|doesnt|didn't|didnt|did\s*not|denies|denied|without|never|haven't|havent|have\s*no|has\s*no|free\s*of)\b",
-    # Indic negations (Tamil)
-    r"(?:இல்லை|இல்ல|கிடையாது|illai|illa|kidaiyathu)",
-    # Indic negations (Hindi)
-    r"(?:नहीं|ना|नही|nahi|nahin|na)",
-    # Indic negations (Telugu)
-    r"(?:లేదు|కాదు|ledu|kadu)",
+    # Indic negations (Tamil - Unicode script & transliterations with word boundaries)
+    r"(?:இல்லை|இல்ல|கிடையாது|\b(?:illai|illa|kidaiyathu)\b)",
+    # Indic negations (Hindi - Unicode script & transliterations with word boundaries)
+    r"(?:नहीं|ना|नही|\b(?:nahi|nahin|na|mat)\b)",
+    # Indic negations (Telugu - Unicode script & transliterations with word boundaries)
+    r"(?:లేదు|కాదు|\b(?:ledu|kadu)\b)",
 ]
+
+# Delimiters that separate syntactic clauses (punctuation & contrastive conjunctions)
+# Prevents negation bleeding across clauses (e.g. 'no fever, but severe chest pain')
+_CLAUSE_DELIMITER_REGEX = re.compile(
+    r"[.,;!?|\n\r]+|\b(?:but|however|except|yet|although|though|whereas|lekin|magar|parantu|kintu|aanaal|aanal|kaani|kani)\b",
+    re.IGNORECASE,
+)
 
 
 def is_text_negated(text: str) -> bool:
@@ -233,20 +240,38 @@ def is_text_negated(text: str) -> bool:
 def is_negated_match(text: str, match_start: int, match_end: int) -> bool:
     """
     Check if the term matched at [match_start:match_end] in text is negated.
-    Checks the 5-word prefix before match_start and the 3-word suffix after match_end
+    Enforces strict clause boundary scoping so negations in one clause do not
+    bleed into adjacent clauses (e.g., 'no fever, but chest pain').
+    Checks up to 4 words before match_start and up to 3 words after match_end
     (essential for Indic SOV negation: 'nenju vali illa', 'dard nahi hai').
     """
     text_lower = text.lower()
-    prefix = text_lower[:match_start].strip()
-    prefix_words = prefix.split()
-    preceding_window = " ".join(prefix_words[-5:]) if prefix_words else ""
-    if any(re.search(pat, preceding_window, re.IGNORECASE) for pat in _NEGATION_PATTERNS):
+
+    # 1. Preceding window within the immediate clause
+    prefix = text_lower[:match_start]
+    delimiters_before = list(_CLAUSE_DELIMITER_REGEX.finditer(prefix))
+    if delimiters_before:
+        last_delim = delimiters_before[-1]
+        clause_prefix = prefix[last_delim.end():].strip()
+    else:
+        clause_prefix = prefix.strip()
+
+    prefix_words = clause_prefix.split()
+    preceding_window = " ".join(prefix_words[-4:]) if prefix_words else ""
+    if preceding_window and any(re.search(pat, preceding_window, re.IGNORECASE) for pat in _NEGATION_PATTERNS):
         return True
 
-    suffix = text_lower[match_end:].strip()
-    suffix_words = suffix.split()
-    following_window = " ".join(suffix_words[:4]) if suffix_words else ""
-    if any(re.search(pat, following_window, re.IGNORECASE) for pat in _NEGATION_PATTERNS):
+    # 2. Following window within the immediate clause (Indic SOV: 'nenju vali illa')
+    suffix = text_lower[match_end:]
+    first_delim = _CLAUSE_DELIMITER_REGEX.search(suffix)
+    if first_delim:
+        clause_suffix = suffix[:first_delim.start()].strip()
+    else:
+        clause_suffix = suffix.strip()
+
+    suffix_words = clause_suffix.split()
+    following_window = " ".join(suffix_words[:3]) if suffix_words else ""
+    if following_window and any(re.search(pat, following_window, re.IGNORECASE) for pat in _NEGATION_PATTERNS):
         return True
 
     return False
@@ -296,7 +321,7 @@ def scan_raw_transcript(
         # Check breathing info existence in text (even if negated, breathing was mentioned)
         if any(kw in text_lower for kw in [
             "breath", "breathing", "respiration", "shortness of breath", "breathless",
-            "மூச்சு", "moochu", "सांस", "saans", "శ్వాస", "swasa", "ఆయాసం"
+            "மூச்சு", "moochu", "सांस", "saans", "శ్వాస", "swasa", "ఆయాసం", "aayasam"
         ]):
             has_breathing_info = True
 
@@ -312,9 +337,9 @@ def scan_raw_transcript(
                         continue
 
                     # Non-negated chest pain match
-                    if any(cp in kw.lower() for cp in [
+                    if "chest pain" in out_reason.lower() or any(cp in kw.lower() for cp in [
                         "chest pain", "மார்பு வலி", "நெஞ்சு வலி", "marbu vali", "nenju vali",
-                        "सीने में दर्द", "छाती में दर्द", "seene me dard", "chhati me dard", "ఛాతీ నొప్పి"
+                        "सीने", "छाती", "seene", "chhati", "ఛాతీ", "chati"
                     ]):
                         has_chest_pain = True
 

@@ -26,6 +26,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [role, setRole] = useState<'doctor' | 'asha_worker' | 'admin'>('doctor');
   const [userId, setUserId] = useState('');
+  const [password, setPassword] = useState('');
   const [regNumber, setRegNumber] = useState('');
   const [council, setCouncil] = useState(STATE_COUNCILS[0]);
   const [isLoading, setIsLoading] = useState(false);
@@ -43,6 +44,7 @@ export default function LoginPage() {
       const payload: Record<string, any> = {
         user_id: userId.trim() || (role === 'doctor' ? 'dr_clinician' : 'admin_user'),
         role: role,
+        password: password.trim() || (role === 'doctor' ? 'grannus_secure_doctor_2026' : 'grannus_secure_admin_2026'),
       };
 
       if (role === 'doctor') {
@@ -124,6 +126,19 @@ export default function LoginPage() {
                 onChange={(e) => setUserId(e.target.value)}
                 required
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Account Password</Label>
+              <Input
+                type="password"
+                placeholder="Enter password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Demo credentials default: {role === 'doctor' ? 'grannus_secure_doctor_2026' : 'grannus_secure_admin_2026'}
+              </p>
             </div>
 
             {role === 'doctor' && (

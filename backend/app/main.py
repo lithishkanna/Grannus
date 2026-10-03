@@ -158,6 +158,7 @@ def prometheus_metrics():
 class LoginRequest(BaseModel):
     user_id: str
     role: UserRole
+    password: Optional[str] = None
     doctor_registration_number: Optional[str] = None
     state_medical_council: Optional[str] = None
 
@@ -185,15 +186,21 @@ class ErasureRequest(BaseModel):
 async def login(req: LoginRequest):
     """
     Authenticate a patient, doctor, or administrator.
-    Verifies Indian medical registration credentials for doctors.
+    Verifies passwords and Indian medical registration credentials for doctors.
     """
+    from app.auth import validate_doctor_registration, authenticate_credentials
+    if not authenticate_credentials(req.user_id, req.role, req.password):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials. Please verify your user ID and password.",
+        )
+
     if req.role == UserRole.DOCTOR:
         if not req.doctor_registration_number:
             raise HTTPException(
                 status_code=400,
                 detail="Doctor registration requires a valid NMC/State Medical Council registration number.",
             )
-        from app.auth import validate_doctor_registration
         if not validate_doctor_registration(req.doctor_registration_number):
             raise HTTPException(
                 status_code=400,
@@ -366,27 +373,27 @@ async def process_audio(
 
     except AudioTooShortError as exc:
         logger.warning("Audio too short: %s", exc)
-        raise HTTPException(status_code=400, detail=f"Audio recording too short: {exc}") from exc
+        raise HTTPException(status_code=400, detail="Audio recording too short. Minimum duration is 1.0 second.") from exc
 
     except AudioTooLongError as exc:
         logger.warning("Audio too long: %s", exc)
-        raise HTTPException(status_code=400, detail=f"Audio recording too long: {exc}") from exc
+        raise HTTPException(status_code=400, detail="Audio recording exceeds maximum permitted duration.") from exc
 
     except AudioFormatError as exc:
         logger.warning("Audio format error: %s", exc)
-        raise HTTPException(status_code=400, detail=f"Unsupported or corrupted audio format: {exc}") from exc
+        raise HTTPException(status_code=400, detail="Unsupported or corrupted audio format.") from exc
 
     except SarvamSTTError as exc:
         logger.error("Speech-to-text failure: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Speech-to-Text service error: {exc}") from exc
+        raise HTTPException(status_code=502, detail="Speech-to-Text service temporarily unavailable.") from exc
 
     except GeminiExtractionError as exc:
         logger.error("Medical extraction failure: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Medical extraction service error: {exc}") from exc
+        raise HTTPException(status_code=502, detail="Medical extraction service temporarily unavailable.") from exc
 
     except Exception as exc:
         logger.exception("Unexpected pipeline failure")
-        raise HTTPException(status_code=500, detail=f"Pipeline processing failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Pipeline processing failed. Please try again or seek direct medical attention.") from exc
 
 
 @app.post("/api/v1/doctor/voice-prescription", response_model=VoicePrescriptionResponse)
@@ -460,10 +467,10 @@ async def voice_prescription(
 
     except SarvamSTTError as exc:
         logger.error("Speech-to-text failure: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Speech-to-Text service error: {exc}") from exc
+        raise HTTPException(status_code=502, detail="Speech-to-Text service temporarily unavailable.") from exc
     except Exception as exc:
         logger.exception("Unexpected voice prescription failure")
-        raise HTTPException(status_code=500, detail=f"Voice prescription processing failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Voice prescription processing failed.") from exc
 
 
 @app.post("/api/v1/export/fhir")
@@ -506,7 +513,7 @@ async def export_fhir(
         return bundle
     except Exception as exc:
         logger.exception("Failed to generate FHIR bundle")
-        raise HTTPException(status_code=500, detail=f"Failed to generate FHIR bundle: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Failed to generate ABDM FHIR bundle.") from exc
 
 
 # -----------------------------------------------------------------------------

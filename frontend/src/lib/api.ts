@@ -161,6 +161,30 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'en-IN', name: 'English', nativeName: 'English' }
 ];
 
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('grannus_auth_token');
+}
+
+export function setAuthToken(token: string): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('grannus_auth_token', token);
+}
+
+export function removeAuthToken(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('grannus_auth_token');
+}
+
+export function getAuthHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 export async function processAudio(params: {
   audio: Blob;
   language_code?: string;
@@ -184,6 +208,7 @@ export async function processAudio(params: {
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const response = await fetch(`${baseUrl}/api/v1/pipeline/process-audio`, {
     method: 'POST',
+    headers: getAuthHeaders(),
     body: formData,
   });
 
@@ -211,6 +236,7 @@ export async function sendVoicePrescription(params: {
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const response = await fetch(`${baseUrl}/api/v1/doctor/voice-prescription`, {
     method: 'POST',
+    headers: getAuthHeaders(),
     body: formData,
   });
 
@@ -228,12 +254,68 @@ export async function exportFhirBundle(result: PipelineResult): Promise<Record<s
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const response = await fetch(`${baseUrl}/api/v1/export/fhir`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
     body: JSON.stringify(result),
   });
 
   if (!response.ok) {
     throw new Error(`FHIR Export API Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Non-blocking asynchronous audio intake for low-bandwidth networks.
+ */
+export async function submitAudioAsync(params: {
+  audio: Blob;
+  language_code?: string;
+  doctor_preferred_language?: string;
+  age?: string;
+  gender?: string;
+  reported_duration?: string;
+  known_conditions?: string;
+  current_medications?: string;
+}): Promise<{ job_id: string; status: string; poll_url: string; message: string }> {
+  const formData = new FormData();
+  formData.append('audio', params.audio, 'recording.webm');
+  if (params.language_code) formData.append('language_code', params.language_code);
+  if (params.doctor_preferred_language) formData.append('doctor_preferred_language', params.doctor_preferred_language);
+  if (params.age) formData.append('age', params.age);
+  if (params.gender) formData.append('gender', params.gender);
+  if (params.reported_duration) formData.append('reported_duration', params.reported_duration);
+  if (params.known_conditions) formData.append('known_conditions', params.known_conditions);
+  if (params.current_medications) formData.append('current_medications', params.current_medications);
+
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const response = await fetch(`${baseUrl}/api/v1/pipeline/submit-audio`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Submit Audio Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Poll status and progress of an asynchronous pipeline triage job.
+ */
+export async function getJobStatus(jobId: string): Promise<any> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const response = await fetch(`${baseUrl}/api/v1/pipeline/job-status/${jobId}`, {
+    headers: getAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Job Status Error: ${response.statusText}`);
   }
 
   return response.json();

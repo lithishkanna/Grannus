@@ -302,6 +302,108 @@ def test_independent_raw_transcript_scan_indic_negation():
     assert has_cp is False
 
 
+def test_raw_text_scan_english_scenarios():
+    """Pure raw text scan in English: positive detection, proper negation, clause isolation."""
+    # Positive
+    flags, has_cp, has_br = scan_raw_transcript(transcript_english="Severe chest pain and difficulty breathing")
+    assert has_cp is True
+    assert has_br is True
+    assert any(f.severity == "critical" for f in flags)
+
+    # Negation: non-negated red flags should not be raised
+    flags_neg, has_cp_neg, has_br_neg = scan_raw_transcript(transcript_english="Patient has no chest pain and no breathing difficulty")
+    assert has_cp_neg is False
+    assert not any("chest pain" in f.reason.lower() for f in flags_neg)
+    assert not any("breathing" in f.reason.lower() for f in flags_neg)
+    assert has_br_neg is True  # Breathing status was mentioned, preventing breathing unknown
+
+    # Clause boundary isolation: 'no fever, but severe chest pain'
+    flags_clause, has_cp_clause, _ = scan_raw_transcript(transcript_english="Patient has no fever, but severe chest pain")
+    assert has_cp_clause is True
+    assert any("chest pain" in f.reason.lower() for f in flags_clause)
+
+
+def test_raw_text_scan_hindi_scenarios():
+    """Pure raw text scan in Hindi: native script & transliteration with negation & clause isolation."""
+    # Native Hindi Positive
+    flags, has_cp, has_br = scan_raw_transcript(transcript_original="सीने में तेज दर्द है और सांस लेने में तकलीफ हो रही है")
+    assert has_cp is True
+    assert has_br is True
+
+    # Transliterated Hindi Positive
+    flags_trans, has_cp_trans, has_br_trans = scan_raw_transcript(transcript_original="seene me dard hai aur saans phoolna shuru hua")
+    assert has_cp_trans is True
+    assert has_br_trans is True
+
+    # Native Hindi Negation
+    flags_neg, has_cp_neg, _ = scan_raw_transcript(transcript_original="सीने में दर्द नहीं है, केवल जुकाम है")
+    assert has_cp_neg is False
+
+    # Transliterated Hindi Negation (dard nahi hai)
+    flags_trans_neg, has_cp_tneg, _ = scan_raw_transcript(transcript_original="seene me dard nahi hai, sardi hai")
+    assert has_cp_tneg is False
+
+    # Transliterated Hindi Clause Isolation (bukhar nahi hai, lekin seene me dard)
+    flags_clause, has_cp_clause, _ = scan_raw_transcript(transcript_original="bukhar nahi hai, lekin seene me dard hai")
+    assert has_cp_clause is True
+
+
+def test_raw_text_scan_tamil_scenarios():
+    """Pure raw text scan in Tamil: native script & transliteration with negation & clause isolation."""
+    # Native Tamil Positive
+    flags, has_cp, has_br = scan_raw_transcript(transcript_original="கடுமையான நெஞ்சு வலி மற்றும் மூச்சு திணறல்")
+    assert has_cp is True
+    assert has_br is True
+
+    # Transliterated Tamil Positive
+    flags_trans, has_cp_trans, has_br_trans = scan_raw_transcript(transcript_original="nenju vali athigama irukku, moochu thinaran")
+    assert has_cp_trans is True
+    assert has_br_trans is True
+
+    # Transliterated Tamil Negation (nenju vali illa)
+    flags_trans_neg, has_cp_tneg, _ = scan_raw_transcript(transcript_original="nenju vali illa, thala vali mattum")
+    assert has_cp_tneg is False
+
+    # Transliterated Tamil Clause Isolation (kaachal illa, aanaal nenju vali)
+    flags_clause, has_cp_clause, _ = scan_raw_transcript(transcript_original="kaachal illa, aanaal nenju vali irukku")
+    assert has_cp_clause is True
+
+
+def test_raw_text_scan_telugu_scenarios():
+    """Pure raw text scan in Telugu: native script & transliteration with negation & clause isolation."""
+    # Native Telugu Positive
+    flags, has_cp, has_br = scan_raw_transcript(transcript_original="తీవ్రమైన ఛాతీ నొప్పి మరియు ఆయాసం ఉంది")
+    assert has_cp is True
+    assert has_br is True
+
+    # Transliterated Telugu Positive
+    flags_trans, has_cp_trans, has_br_trans = scan_raw_transcript(transcript_original="chati noppi ekkuva ga undi, aayasam vastundi")
+    assert has_cp_trans is True
+    assert has_br_trans is True
+
+    # Transliterated Telugu Negation (chati noppi ledu)
+    flags_trans_neg, has_cp_tneg, _ = scan_raw_transcript(transcript_original="chati noppi ledu, thala noppi undi")
+    assert has_cp_tneg is False
+
+    # Transliterated Telugu Clause Isolation (jwaram ledu, kaani chati noppi)
+    flags_clause, has_cp_clause, _ = scan_raw_transcript(transcript_original="jwaram ledu, kaani chati noppi undi")
+    assert has_cp_clause is True
+
+
+def test_raw_text_scan_word_boundary_safety():
+    """Word boundary checks: words containing 'na' or 'illa' substrings must not cause false negation."""
+    from app.safety import is_text_negated
+    assert is_text_negated("banana") is False
+    assert is_text_negated("pillai") is False
+    assert is_text_negated("panama") is False
+
+    # Standalone negation tokens must still be detected
+    assert is_text_negated("no") is True
+    assert is_text_negated("nahi") is True
+    assert is_text_negated("illa") is True
+    assert is_text_negated("ledu") is True
+
+
 # =============================================================================
 # 0.3: Insufficient input never yields LOW
 # =============================================================================

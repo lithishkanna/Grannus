@@ -74,7 +74,7 @@ def sanitize_log_message(msg: str) -> str:
 
 def _get_encryption_key() -> bytes:
     settings = get_settings()
-    raw = settings.gemini_api_key or "grannus_telehealth_field_level_phi_key"
+    raw = settings.phi_encryption_key or "grannus_telehealth_field_level_phi_key"
     return hashlib.sha256(raw.encode()).digest()
 
 

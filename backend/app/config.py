@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_anon_key: str = ""
 
+    # --- Auth & PHI Security ---
+    jwt_secret_key: str = ""
+    phi_encryption_key: str = ""
+
     # --- Audio Preprocessing ---
     enable_audio_preprocessing: bool = True
     min_audio_duration_seconds: float = 1.0

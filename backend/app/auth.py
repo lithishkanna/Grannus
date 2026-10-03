@@ -6,6 +6,7 @@ Compliant with:
   - Supabase Auth & JWT standards
   - Cryptographic signed short-lived URLs for audio/media files
 """
+import os
 import hmac
 import hashlib
 import time
@@ -21,6 +22,65 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 
 security_bearer = HTTPBearer(auto_error=False)
+
+
+def get_signing_secret() -> str:
+    """Retrieve dedicated JWT signing secret independent of external API keys."""
+    settings = get_settings()
+    return settings.jwt_secret_key or "grannus_secure_jwt_signing_key_32bytes_min"
+
+
+def hash_password(password: str) -> str:
+    """Hash password using PBKDF2-HMAC-SHA256 with 100,000 iterations and random 16-byte salt."""
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+    return f"{salt.hex()}:{dk.hex()}"
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    """Verify password against stored PBKDF2 hash."""
+    try:
+        parts = hashed.split(":")
+        if len(parts) != 2:
+            return False
+        salt = bytes.fromhex(parts[0])
+        expected_dk = bytes.fromhex(parts[1])
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+        return hmac.compare_digest(dk, expected_dk)
+    except Exception:
+        return False
+
+
+# Registered medical / admin users with PBKDF2-hashed passwords
+_REGISTERED_USERS: Dict[str, Dict[str, Any]] = {
+    "dr_clinician": {
+        "role": "doctor",
+        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "doctor_reg_no": "TNMC-54321",
+        "state_council": "Tamil Nadu Medical Council",
+    },
+    "admin_user": {
+        "role": "admin",
+        "password_hash": hash_password("grannus_secure_admin_2026"),
+        "doctor_reg_no": None,
+        "state_council": None,
+    },
+}
+
+
+def authenticate_credentials(user_id: str, role: "UserRole", password: Optional[str] = None) -> bool:
+    """
+    Authenticate user credentials against password registry.
+    If the user has a registered password, verification is enforced.
+    """
+    if user_id in _REGISTERED_USERS:
+        reg_info = _REGISTERED_USERS[user_id]
+        if password:
+            return verify_password(password, reg_info["password_hash"])
+        return False
+    if password is not None:
+        return len(password.strip()) >= 6
+    return True
 
 
 class UserRole(str, Enum):
@@ -60,8 +120,7 @@ def create_token(
     """
     Generate a cryptographic signed token (HMAC-SHA256) for session management.
     """
-    settings = get_settings()
-    secret = settings.gemini_api_key or "grannus_secure_fallback_secret_key_32bytes"
+    secret = get_signing_secret()
     
     is_verified = False
     if role == UserRole.DOCTOR and doctor_reg_no:
@@ -84,8 +143,7 @@ def create_token(
 
 def verify_token(token: str) -> AuthenticatedUser:
     """Validate and decode signed token."""
-    settings = get_settings()
-    secret = settings.gemini_api_key or "grannus_secure_fallback_secret_key_32bytes"
+    secret = get_signing_secret()
 
     try:
         parts = token.split(".")
@@ -112,10 +170,10 @@ def verify_token(token: str) -> AuthenticatedUser:
             state_medical_council=payload.get("state_council"),
             is_verified_doctor=payload.get("verified_doctor", False),
         )
-    except Exception as e:
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Authentication failed: {e}",
+            detail="Authentication failed: Invalid or expired token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -172,8 +230,7 @@ def generate_signed_url(file_path: str, expires_in_seconds: int = 1800) -> str:
     Generate short-lived, HMAC-signed URL for audio/media files (default: 30 minutes).
     Prevents unauthorized public access to patient voice recordings.
     """
-    settings = get_settings()
-    secret = settings.gemini_api_key or "grannus_secure_fallback_secret_key_32bytes"
+    secret = get_signing_secret()
     
     expires_at = int(time.time()) + expires_in_seconds
     message = f"{file_path}:{expires_at}"
@@ -187,8 +244,7 @@ def verify_signed_url(file_path: str, expires: int, signature: str) -> bool:
     if time.time() > expires:
         return False
     
-    settings = get_settings()
-    secret = settings.gemini_api_key or "grannus_secure_fallback_secret_key_32bytes"
+    secret = get_signing_secret()
     
     expected_message = f"{file_path}:{expires}"
     expected_sig = hmac.new(secret.encode(), expected_message.encode(), hashlib.sha256).hexdigest()

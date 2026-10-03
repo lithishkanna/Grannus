@@ -6,6 +6,8 @@
  * with retry backoff when connection is restored.
  */
 
+import { getAuthHeaders } from './api';
+
 export interface OfflineConsultation {
   id: string;
   createdAt: number;
@@ -93,6 +95,7 @@ export async function syncOfflineConsultations(
 
       const response = await fetch(`${apiUrl}/api/v1/pipeline/process-audio`, {
         method: 'POST',
+        headers: getAuthHeaders(),
         body: formData,
       });
 

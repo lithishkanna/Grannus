@@ -37,11 +37,17 @@ class SecurityValidationError(HTTPException):
 
 
 def sanitize_filename(filename: Optional[str]) -> str:
-    """Sanitize filename to prevent directory traversal attacks."""
+    """
+    Sanitize filename to prevent directory traversal attacks across platforms (Linux & Windows).
+    Normalizes Windows backslashes so path traversal attempts like '..\\windows\\cmd.wav'
+    are safely extracted as 'cmd.wav' regardless of host OS.
+    """
     if not filename:
         return "patient_audio.wav"
     
-    clean_name = Path(filename).name.strip()
+    # Normalize Windows backslashes to standard forward slashes for cross-platform safety
+    normalized = filename.replace("\\", "/").strip()
+    clean_name = Path(normalized).name.strip()
     if not SAFE_FILENAME_REGEX.match(clean_name) or ".." in clean_name:
         # Fallback to safe alphanumeric name
         stem = re.sub(r"[^a-zA-Z0-9_\-]", "_", Path(clean_name).stem)
