@@ -13,9 +13,13 @@ from dotenv import load_dotenv
 load_dotenv()  # populate os.environ from .env before Settings() reads it
 
 from contextlib import asynccontextmanager
+import time
+import uuid
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Depends, status
+from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from app.observability.metrics import get_metrics
 
 from app.audio_preprocessing import (
     AudioFormatError,
@@ -88,8 +92,25 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def observability_middleware(request: Request, call_next):
+    """Correlation ID and latency tracking middleware."""
+    req_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = req_id
+    get_metrics().record_request(request.url.path)
+    
+    start_time = time.time()
+    response = await call_next(request)
+    duration = time.time() - start_time
+    
+    get_metrics().record_latency(request.url.path, duration)
+    response.headers["X-Request-ID"] = req_id
+    return response
+
+
 @app.get("/health")
 def health() -> dict:
+    """Liveness probe."""
     settings = get_settings()
     model = get_model()
     return {
@@ -99,6 +120,29 @@ def health() -> dict:
         "audio_preprocessing_enabled": settings.enable_audio_preprocessing,
         "ml_model_loaded": model.is_available(),
     }
+
+
+@app.get("/ready")
+def ready() -> dict:
+    """Readiness probe validating models and critical integrations."""
+    settings = get_settings()
+    model = get_model()
+    is_ready = bool(settings.sarvam_api_key) and bool(settings.gemini_api_key)
+    payload = {
+        "status": "ready" if is_ready else "degraded",
+        "sarvam_configured": bool(settings.sarvam_api_key),
+        "gemini_configured": bool(settings.gemini_api_key),
+        "ml_model_loaded": model.is_available(),
+    }
+    if not is_ready:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=payload)
+    return payload
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def prometheus_metrics():
+    """Prometheus exposition metrics."""
+    return get_metrics().generate_prometheus_output()
 
 
 # --- Security & Auth Endpoints ---
