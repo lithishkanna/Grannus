@@ -10,6 +10,8 @@ import { TranscriptView } from '@/components/results/transcript-view';
 import { TranslationCard } from '@/components/results/translation-card';
 import { HomeRemedy } from '@/components/results/home-remedy';
 import { AcousticBiomarkerCard } from '@/components/results/acoustic-biomarker-card';
+import { EmergencyScreen } from '@/components/results/emergency-screen';
+import { FollowUpCard } from '@/components/results/follow-up-card';
 import { FhirExportButton } from '@/components/dashboard/fhir-export-button';
 import { VoiceReplyRecorder } from '@/components/dashboard/voice-reply-recorder';
 import { Button } from '@/components/ui/button';
@@ -104,6 +106,16 @@ function ResultsContent() {
       </div>
 
       <div className="container mx-auto max-w-5xl px-4 space-y-10">
+        {/* Prominent Emergency Screen for Critical Cases */}
+        {(priority.urgency_tier === 'emergency' || (priority.level === 'HIGH' && (priority.emergency_override || hasCriticalFlags))) && (
+          <motion.section initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.3 }}>
+            <EmergencyScreen
+              reasons={priority.reasons}
+              emergencyNumbers={priority.emergency_call_numbers || ['108', '112']}
+            />
+          </motion.section>
+        )}
+
         {/* Doctor Summary / Home Remedies depending on priority */}
         {['HIGH', 'MEDIUM', 'PENDING_REVIEW'].includes(priority.level) && doctor_translated_summary && (
           <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }}>
@@ -117,8 +129,17 @@ function ResultsContent() {
           </motion.section>
         )}
 
-        {/* Doctor Voice Reply to Patient */}
+        {/* 2 to 3 Day Follow-Up & One-Tap Clinical Escalation */}
         <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.12 }}>
+          <FollowUpCard
+            consultationId={id || result.request_id}
+            initialTier={priority.urgency_tier || (priority.level === 'LOW' ? 'self_care' : 'doctor_soon')}
+            followUpDays={priority.follow_up_days || 2}
+          />
+        </motion.section>
+
+        {/* Doctor Voice Reply to Patient */}
+        <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.14 }}>
           <VoiceReplyRecorder 
             patientLanguage={patient_input.language || 'hi-IN'} 
             consultationId={id || undefined} 

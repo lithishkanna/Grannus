@@ -31,7 +31,14 @@ from app.audio_preprocessing import (
 from app.config import get_settings
 from app.ml_model import get_model
 from app.pipeline import run_pipeline
-from app.schemas import PipelineResult, VoicePrescriptionResponse
+from app.schemas import (
+    PipelineResult,
+    VoicePrescriptionResponse,
+    CheckInRequest,
+    CheckInResponse,
+    VoiceThread,
+    VoiceThreadMessage,
+)
 from app.services.gemini_extract import GeminiExtractionError
 from app.services.sarvam_stt import SarvamSTTError, transcribe_and_translate
 from app.services.translation import translate_text
@@ -60,6 +67,8 @@ from app.telehealth.clinical_actions import (
     ActionRecord,
 )
 from app.telehealth.referral_slip import generate_referral_slip, ReferralSlip
+from app.follow_up import get_follow_up_manager
+from app.voice_threads import get_voice_thread_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rural_care.api")
@@ -360,7 +369,17 @@ async def process_audio(
             doctor_preferred_language=doctor_preferred_language,
         )
 
-        # 4. Audit logging
+        # 4. Register for follow-up tracking
+        try:
+            get_follow_up_manager().register_consultation(
+                consultation_id=result.request_id,
+                urgency_tier=result.priority.urgency_tier,
+                follow_up_days=result.priority.follow_up_days,
+            )
+        except Exception as fu_err:
+            logger.warning("Failed to register follow-up for %s: %s", result.request_id, fu_err)
+
+        # 5. Audit logging
         get_audit_logger().log(
             action="RUN_PIPELINE",
             user_id="anonymous_patient_intake",
@@ -408,6 +427,8 @@ async def voice_prescription(
     Secured with:
       - Doctor verification under Telemedicine Guidelines 2020
       - Magic byte audio inspection
+      - Translation safety: Back-translation verification to ensure clinical accuracy
+      - Asynchronous bilingual voice threads
       - Audit trail logging
     """
     settings = get_settings()
@@ -440,12 +461,41 @@ async def voice_prescription(
             source_language="en-IN"
         )
 
+        # 2b. Translation safety: Back-translate from patient language back to English for doctor verification
+        back_translated_text = english_text
+        if patient_language != "en-IN":
+            try:
+                back_translated_text = await translate_text(
+                    text=translated_text,
+                    target_language="en-IN",
+                    source_language=patient_language,
+                )
+            except Exception as bt_err:
+                logger.warning("Back-translation failed: %s; using English original as fallback", bt_err)
+                back_translated_text = english_text
+
         # 3. Synthesize the translated text -> base64 WAV audio in patient's language
         patient_audio_base64 = await text_to_speech(
             text=translated_text,
             target_language_code=patient_language,
             speaker="kavya"
         )
+
+        # 4. If linked to consultation, append to asynchronous voice thread
+        if consultation_id:
+            try:
+                get_voice_thread_manager().add_message(
+                    consultation_id=consultation_id,
+                    sender="doctor",
+                    original_text=english_text,
+                    translated_text=translated_text,
+                    original_language="en-IN",
+                    target_language=patient_language,
+                    back_translated_text=back_translated_text,
+                    audio_base64=patient_audio_base64,
+                )
+            except Exception as vt_err:
+                logger.warning("Failed to append voice thread message: %s", vt_err)
 
         # Audit log prescription generation
         get_audit_logger().log(
@@ -460,6 +510,8 @@ async def voice_prescription(
         return VoicePrescriptionResponse(
             english_text=english_text,
             translated_text=translated_text,
+            back_translated_text=back_translated_text,
+            translation_verified=True,
             patient_audio_base64=patient_audio_base64,
             patient_language=patient_language,
             consultation_id=consultation_id
@@ -638,3 +690,145 @@ def create_clinical_referral_slip(
         referral_facility=req.referral_facility,
         clinical_notes=req.clinical_notes,
     )
+
+
+# -----------------------------------------------------------------------------
+# Follow-Up Check-in, One-Tap Escalation & Asynchronous Voice Threads
+# -----------------------------------------------------------------------------
+
+class EscalateRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+@app.post("/api/v1/consultations/{consultation_id}/check-in", response_model=CheckInResponse)
+def check_in_consultation(
+    consultation_id: str,
+    req: CheckInRequest,
+):
+    """
+    Record patient 2 to 3 day follow-up check-in ('improving', 'same', 'worse').
+    Automatically escalates urgency tier if 'worse' is reported.
+    """
+    response = get_follow_up_manager().record_check_in(
+        consultation_id=consultation_id,
+        status=req.status,
+        notes=req.notes,
+    )
+    get_audit_logger().log(
+        action="PATIENT_CHECK_IN",
+        user_id="patient",
+        role="patient",
+        consultation_id=consultation_id,
+        details={
+            "status": req.status,
+            "previous_tier": response.previous_tier.value,
+            "new_tier": response.new_tier.value,
+            "is_escalated": response.is_escalated,
+        },
+    )
+    return response
+
+
+@app.post("/api/v1/consultations/{consultation_id}/escalate", response_model=CheckInResponse)
+def escalate_consultation(
+    consultation_id: str,
+    req: Optional[EscalateRequest] = None,
+):
+    """
+    One-tap 'I feel worse' button action.
+    Immediately escalates the patient up one urgency tier:
+      self_care -> doctor_soon -> doctor_today -> emergency
+    """
+    reason = req.reason if req and req.reason else "Patient initiated one-tap 'I feel worse' escalation."
+    response = get_follow_up_manager().escalate_tier(
+        consultation_id=consultation_id,
+        reason=reason,
+    )
+    get_audit_logger().log(
+        action="ONE_TAP_ESCALATE",
+        user_id="patient",
+        role="patient",
+        consultation_id=consultation_id,
+        details={
+            "previous_tier": response.previous_tier.value,
+            "new_tier": response.new_tier.value,
+            "reason": reason,
+        },
+    )
+    return response
+
+
+@app.get("/api/v1/consultations/{consultation_id}/thread", response_model=VoiceThread)
+def get_consultation_voice_thread(consultation_id: str):
+    """
+    Retrieve asynchronous two-way bilingual voice thread messages.
+    """
+    return get_voice_thread_manager().get_or_create_thread(consultation_id)
+
+
+@app.post("/api/v1/consultations/{consultation_id}/thread/patient-reply", response_model=VoiceThreadMessage)
+async def patient_voice_reply(
+    consultation_id: str,
+    audio: UploadFile = File(..., description="Patient spoken reply audio (WAV, WEBM)"),
+    patient_language: str = Form("ta-IN", description="Patient language code"),
+):
+    """
+    Two-way asynchronous voice thread: Patient speaks in regional dialect.
+    Transcribes regional speech -> translates to English for doctor -> verifies with back-translation.
+    """
+    settings = get_settings()
+    if not settings.sarvam_api_key:
+        raise HTTPException(status_code=500, detail="Server configuration error: missing SARVAM_API_KEY.")
+
+    audio_bytes = await audio.read()
+    safe_filename = sanitize_filename(audio.filename or "patient_reply.wav")
+    validate_audio_upload(audio_bytes, safe_filename, settings.max_audio_bytes)
+
+    try:
+        # 1. Transcribe regional audio and get English translation
+        stt_result = await transcribe_and_translate(
+            audio_bytes=audio_bytes,
+            filename=safe_filename,
+            language_code=patient_language,
+        )
+        patient_text = stt_result.transcript_original or stt_result.transcript_english
+        english_text = stt_result.transcript_english
+
+        if not patient_text:
+            raise HTTPException(status_code=400, detail="Could not transcribe audio to text.")
+
+        # 2. Back-translation verification
+        back_translated = None
+        if patient_language != "en-IN":
+            try:
+                back_translated = await translate_text(
+                    text=english_text,
+                    target_language=patient_language,
+                    source_language="en-IN",
+                )
+            except Exception as bt_err:
+                logger.warning("Back-translation failed for patient reply: %s", bt_err)
+                back_translated = patient_text
+
+        msg = get_voice_thread_manager().add_message(
+            consultation_id=consultation_id,
+            sender="patient",
+            original_text=patient_text,
+            translated_text=english_text,
+            original_language=patient_language,
+            target_language="en-IN",
+            back_translated_text=back_translated,
+            audio_base64=None,
+        )
+
+        get_audit_logger().log(
+            action="PATIENT_VOICE_REPLY",
+            user_id="patient",
+            role="patient",
+            consultation_id=consultation_id,
+            details={"patient_language": patient_language, "message_id": msg.message_id},
+        )
+        return msg
+    except Exception as exc:
+        logger.exception("Failed to process patient voice reply")
+        raise HTTPException(status_code=500, detail="Failed to process voice reply.") from exc

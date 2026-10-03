@@ -11,7 +11,7 @@ Explainable priority assessment output with level, confidence, emergency overrid
 triggered rules, and contributing reasons.
 """
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from app.feature_extraction import extract_features
 from app.ml_model import get_model
@@ -19,6 +19,7 @@ from app.safety import screen_safety
 from app.schemas import (
     PriorityAssessment,
     PriorityLevel,
+    UrgencyTier,
     SafetyScreening,
     StructuredMedicalSummary,
     Symptom,
@@ -273,6 +274,39 @@ def _comorbidity_escalation(patient_context: dict, summary: StructuredMedicalSum
     return extra_score, reasons
 
 
+def determine_urgency_tier(
+    level: PriorityLevel,
+    emergency_override: bool = False,
+    safety_screening: Optional[SafetyScreening] = None,
+    score: float = 0.0,
+) -> Tuple[UrgencyTier, int]:
+    """
+    Map PriorityLevel and clinical safety signals to the 4 product urgency tiers:
+      - emergency: Immediate emergency, call 108/112 (critical flags / override)
+      - doctor_today: Needs clinical review today / within 24 hours (HIGH or acute MEDIUM)
+      - doctor_soon: Needs clinical consultation in 2-3 days (MEDIUM / PENDING_REVIEW)
+      - self_care: Safe for home care with monitoring and 2-3 day follow-up (LOW)
+    Returns: (urgency_tier, follow_up_days)
+    """
+    if emergency_override or (safety_screening and safety_screening.has_critical_flags):
+        return UrgencyTier.EMERGENCY, 0
+
+    if level == PriorityLevel.HIGH:
+        if safety_screening and any(f.severity == "critical" for f in safety_screening.red_flags):
+            return UrgencyTier.EMERGENCY, 0
+        return UrgencyTier.DOCTOR_TODAY, 1
+
+    if level == PriorityLevel.MEDIUM:
+        if score >= 40.0:
+            return UrgencyTier.DOCTOR_TODAY, 1
+        return UrgencyTier.DOCTOR_SOON, 2
+
+    if level == PriorityLevel.PENDING_REVIEW:
+        return UrgencyTier.DOCTOR_SOON, 2
+
+    return UrgencyTier.SELF_CARE, 3
+
+
 def assess_priority(
     summary: StructuredMedicalSummary,
     patient_context: Optional[dict] = None,
@@ -306,8 +340,16 @@ def assess_priority(
     # 3. Check for Emergency / Safety Override
     if safety_screening.override_priority or safety_screening.has_critical_flags:
         logger.info("Safety override triggered priority=HIGH reasons=%s", triggered_rules)
+        tier, fu_days = determine_urgency_tier(
+            PriorityLevel.HIGH,
+            emergency_override=True,
+            safety_screening=safety_screening,
+            score=rule_score,
+        )
         return PriorityAssessment(
             level=PriorityLevel.HIGH,
+            urgency_tier=tier,
+            follow_up_days=fu_days,
             confidence=1.0,
             emergency_override=True,
             triggered_rules=triggered_rules,
@@ -367,8 +409,16 @@ def assess_priority(
                 reasons.append(f"Missing critical info floor: {'; '.join(safety_screening.missing_critical_info)}")
 
             logger.info("ML priority assessment level=%s conf=%.2f reasons=%s", level, confidence, reasons)
+            tier, fu_days = determine_urgency_tier(
+                level,
+                emergency_override=False,
+                safety_screening=safety_screening,
+                score=rule_score,
+            )
             return PriorityAssessment(
                 level=level,
+                urgency_tier=tier,
+                follow_up_days=fu_days,
                 confidence=confidence,
                 emergency_override=False,
                 triggered_rules=triggered_rules,
@@ -419,8 +469,16 @@ def assess_priority(
         fallback_reasons.append(f"Missing critical info floor: {'; '.join(safety_screening.missing_critical_info)}")
 
     logger.info("Rule-based fallback priority assessment level=%s score=%.2f", level, rule_score)
+    tier, fu_days = determine_urgency_tier(
+        level,
+        emergency_override=False,
+        safety_screening=safety_screening,
+        score=rule_score,
+    )
     return PriorityAssessment(
         level=level,
+        urgency_tier=tier,
+        follow_up_days=fu_days,
         confidence=conf,
         emergency_override=False,
         triggered_rules=triggered_rules,

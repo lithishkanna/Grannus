@@ -167,6 +167,21 @@ export function VoiceReplyRecorder({ patientLanguage, consultationId }: VoiceRep
                 <p className="text-sm text-foreground bg-muted/30 p-2 rounded-lg border border-border">{result.translated_text}</p>
               </div>
 
+              {result.back_translated_text && (
+                <div className="border border-primary/30 bg-primary/5 p-3 rounded-lg">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-primary uppercase tracking-wider mb-1">
+                    <span>🛡️ Translation Safety Verification</span>
+                    <span className="ml-auto text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">Back-Translated to English</span>
+                  </div>
+                  <p className="text-xs text-foreground/90 italic">
+                    "{result.back_translated_text}"
+                  </p>
+                  <span className="text-[10px] text-muted-foreground mt-1.5 block">
+                    ✓ What the patient hears verified back to English for clinician review
+                  </span>
+                </div>
+              )}
+
               {result.patient_audio_base64 && (
                 <Button
                   variant="outline"

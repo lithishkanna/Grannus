@@ -168,6 +168,13 @@ class PriorityLevel(str, Enum):
     PENDING_REVIEW = "PENDING_REVIEW"
 
 
+class UrgencyTier(str, Enum):
+    EMERGENCY = "emergency"
+    DOCTOR_TODAY = "doctor_today"
+    DOCTOR_SOON = "doctor_soon"
+    SELF_CARE = "self_care"
+
+
 class PriorityAssessment(BaseModel):
     """
     Output of the safety engine + ML model + rule fallback (priority.py).
@@ -175,6 +182,18 @@ class PriorityAssessment(BaseModel):
     summary, which is what makes the priority explainable.
     """
     level: PriorityLevel
+    urgency_tier: UrgencyTier = Field(
+        default=UrgencyTier.DOCTOR_TODAY,
+        description="Clinical product urgency tier: 'emergency', 'doctor_today', 'doctor_soon', 'self_care'.",
+    )
+    follow_up_days: int = Field(
+        default=2,
+        description="Recommended follow-up interval in days (e.g. 2-3 days for self-care / doctor soon).",
+    )
+    emergency_call_numbers: List[str] = Field(
+        default_factory=lambda: ["108", "112"],
+        description="National emergency numbers for immediate dispatch.",
+    )
     confidence: float = Field(
         default=0.0, ge=0.0, le=1.0,
         description="0-1 prediction confidence. From ML model probability if available, else rule-based heuristic.",
@@ -360,12 +379,58 @@ class DoctorTranslatedSummary(BaseModel):
 class VoicePrescriptionResponse(BaseModel):
     """
     Response model for the doctor's voice prescription endpoint.
+    Includes back-translation verification for clinical translation safety.
     """
     english_text: str = Field(description="The transcribed English text of the doctor's advice.")
     translated_text: str = Field(description="The translated text in the patient's language.")
+    back_translated_text: Optional[str] = Field(
+        default=None,
+        description="The patient-language translation back-translated into English so doctor can verify medical fidelity.",
+    )
+    translation_verified: bool = Field(
+        default=True,
+        description="True if the translation preserves clinical meaning without dangerous omissions.",
+    )
     patient_audio_base64: Optional[str] = Field(default=None, description="Base64-encoded WAV audio spoken in the patient's language.")
     patient_language: str = Field(description="BCP-47 code of the patient's language.")
     consultation_id: Optional[str] = Field(default=None, description="Optional consultation ID to link this prescription.")
+
+
+class VoiceThreadMessage(BaseModel):
+    message_id: str
+    sender: str = Field(description="'doctor' or 'patient'")
+    original_text: str
+    translated_text: str
+    back_translated_text: Optional[str] = None
+    original_language: str
+    target_language: str
+    audio_base64: Optional[str] = None
+    created_at: str
+
+
+class VoiceThread(BaseModel):
+    thread_id: str
+    consultation_id: str
+    patient_language: str
+    doctor_language: str = "en-IN"
+    messages: List[VoiceThreadMessage] = Field(default_factory=list)
+
+
+class CheckInRequest(BaseModel):
+    status: str = Field(description="'improving', 'same', or 'worse'")
+    notes: Optional[str] = None
+
+
+class CheckInResponse(BaseModel):
+    consultation_id: str
+    previous_tier: UrgencyTier
+    new_tier: UrgencyTier
+    status: str
+    message: str
+    is_escalated: bool
+    escalation_reason: Optional[str] = None
+    emergency_call_numbers: List[str] = Field(default_factory=lambda: ["108", "112"])
+    next_follow_up_days: int = 2
 
 
 class PipelineResult(BaseModel):

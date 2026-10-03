@@ -39,6 +39,20 @@ export function HomeRemedy({ data }: { data: HomeRemedyGuidance }) {
           </ol>
         </div>
 
+        {data.monitoring_signs && data.monitoring_signs.length > 0 && (
+          <div className="p-4 bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-300">
+            <h4 className="flex items-center gap-2 font-medium mb-2 text-amber-900 dark:text-amber-400">
+              <Activity className="w-4 h-4 text-amber-600" />
+              Signs to Monitor:
+            </h4>
+            <ul className="list-disc pl-5 space-y-1.5 text-sm">
+              {data.monitoring_signs.map((sign, idx) => (
+                <li key={idx}>{sign}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="p-5 bg-red-50 dark:bg-red-950/30 rounded-xl border border-red-100 dark:border-red-900/50 text-red-800 dark:text-red-300">
           <h4 className="flex items-center gap-2 font-medium mb-3 text-red-900 dark:text-red-400">
             <AlertTriangle className="w-5 h-5" />

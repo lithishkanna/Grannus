@@ -145,6 +145,13 @@ async def generate_home_remedies(
         seek-doctor triggers (with translations if patient_language != English).
         Returns None if generation fails (pipeline continues without guidance).
     """
+    # 1. First consult our vetted, clinician-approved home remedy library
+    from app.remedy_library import get_approved_home_remedy_guidance
+    approved = get_approved_home_remedy_guidance(summary, patient_language)
+    if approved:
+        logger.info("Matched clinical approved home remedy library entry for symptoms")
+        return approved
+
     settings = get_settings()
     client = _get_gemini_client()
     prompt = _build_home_remedy_prompt(summary)

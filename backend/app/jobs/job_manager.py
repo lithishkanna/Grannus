@@ -123,6 +123,17 @@ class JobManager:
             job.result = result
             job.update_stage(JobStatus.COMPLETED, 100, "Consultation triage complete")
 
+            # Register for follow-up tracking
+            try:
+                from app.follow_up import get_follow_up_manager
+                get_follow_up_manager().register_consultation(
+                    consultation_id=result.request_id,
+                    urgency_tier=result.priority.urgency_tier,
+                    follow_up_days=result.priority.follow_up_days,
+                )
+            except Exception as fu_err:
+                logger.warning("Failed to register async follow-up: %s", fu_err)
+
             get_metrics().record_triage(result.priority.level.value)
             get_audit_logger().log(
                 action="ASYNC_JOB_COMPLETED",

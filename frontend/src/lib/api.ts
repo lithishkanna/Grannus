@@ -77,8 +77,13 @@ export interface DoctorTranslatedSummary {
   language: string
 }
 
+export type UrgencyTier = 'emergency' | 'doctor_today' | 'doctor_soon' | 'self_care'
+
 export interface PriorityAssessment {
   level: PriorityLevel
+  urgency_tier?: UrgencyTier
+  follow_up_days?: number
+  emergency_call_numbers?: string[]
   confidence: number
   emergency_override: boolean
   triggered_rules: string[]
@@ -141,6 +146,8 @@ export interface PipelineResult {
 export interface VoicePrescriptionResponse {
   english_text: string
   translated_text: string
+  back_translated_text?: string | null
+  translation_verified?: boolean
   patient_audio_base64: string | null
   patient_language: string
   consultation_id: string | null
@@ -320,4 +327,131 @@ export async function getJobStatus(jobId: string): Promise<any> {
 
   return response.json();
 }
+
+export interface VoiceThreadMessage {
+  message_id: string
+  sender: 'doctor' | 'patient'
+  original_text: string
+  translated_text: string
+  back_translated_text?: string | null
+  original_language: string
+  target_language: string
+  audio_base64?: string | null
+  created_at: string
+}
+
+export interface VoiceThread {
+  thread_id: string
+  consultation_id: string
+  patient_language: string
+  doctor_language: string
+  messages: VoiceThreadMessage[]
+}
+
+export interface CheckInResponse {
+  consultation_id: string
+  previous_tier: UrgencyTier
+  new_tier: UrgencyTier
+  status: string
+  message: string
+  is_escalated: boolean
+  escalation_reason?: string | null
+  emergency_call_numbers: string[]
+  next_follow_up_days: number
+}
+
+/**
+ * Record scheduled 2-3 day follow-up check-in.
+ */
+export async function checkInConsultation(
+  consultationId: string,
+  status: 'improving' | 'same' | 'worse',
+  notes?: string
+): Promise<CheckInResponse> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const response = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/check-in`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ status, notes }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Check-in Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * One-tap "I feel worse" escalation endpoint.
+ */
+export async function escalateConsultation(
+  consultationId: string,
+  reason?: string
+): Promise<CheckInResponse> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const response = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/escalate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ reason: reason || "Patient tapped 'I feel worse'" }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Escalate Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve asynchronous bilingual voice thread.
+ */
+export async function getVoiceThread(consultationId: string): Promise<VoiceThread> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const response = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/thread`, {
+    headers: getAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Get Voice Thread Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Patient sends a spoken reply to the voice thread.
+ */
+export async function replyToVoiceThread(params: {
+  consultationId: string
+  audio: Blob
+  patientLanguage?: string
+}): Promise<VoiceThreadMessage> {
+  const formData = new FormData();
+  formData.append('audio', params.audio, 'patient_reply.webm');
+  if (params.patientLanguage) formData.append('patient_language', params.patientLanguage);
+
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const response = await fetch(
+    `${baseUrl}/api/v1/consultations/${params.consultationId}/thread/patient-reply`,
+    {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Voice Thread Reply Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
 
