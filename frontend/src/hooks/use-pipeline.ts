@@ -1,5 +1,5 @@
 'use client';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { processAudio as apiProcessAudio, PipelineResult } from '@/lib/api';
 import { storeResultToSupabase } from '@/lib/store-result';
 
@@ -20,6 +20,7 @@ export function usePipeline() {
   const [result, setResult] = useState<PipelineResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [consultationId, setConsultationId] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
 
   const simulateStages = useCallback(async () => {
     let active = true;
@@ -45,6 +46,11 @@ export function usePipeline() {
     known_conditions?: string;
     current_medications?: string;
   }) => {
+    if (inFlightRef.current) {
+      console.warn("processAudio already running; ignoring duplicate call");
+      return;
+    }
+    inFlightRef.current = true;
     setIsProcessing(true);
     setError(null);
     const initialProgress = PIPELINE_STAGES.reduce((acc, stage) => {
@@ -88,10 +94,12 @@ export function usePipeline() {
       });
     } finally {
       setIsProcessing(false);
+      inFlightRef.current = false;
     }
   }, [simulateStages]);
 
   const reset = useCallback(() => {
+    inFlightRef.current = false;
     setIsProcessing(false);
     setCurrentStage(null);
     setStageProgress({});

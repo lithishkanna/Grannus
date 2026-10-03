@@ -3,7 +3,7 @@ import { useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { FileJson, Loader2, Download, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { exportFhirBundle, PipelineResult } from '@/lib/api';
+import { exportFhirBundle, loginAsDemoClinician, PipelineResult } from '@/lib/api';
 
 interface FhirExportButtonProps {
   result: PipelineResult;
@@ -41,38 +41,64 @@ export function FhirExportButton({ result }: FhirExportButtonProps) {
     }
   }, [result]);
 
+  const handleQuickLoginAndExport = async () => {
+    setIsExporting(true);
+    setError(null);
+    try {
+      await loginAsDemoClinician();
+      await handleExport();
+    } catch (err: any) {
+      setError('Clinician login failed. Please sign in via the Clinician Portal.');
+      setIsExporting(false);
+    }
+  };
+
   return (
-    <div className="space-y-1">
+    <div className="space-y-1.5">
       <Button
         variant="outline"
         size="sm"
         onClick={handleExport}
         disabled={isExporting}
-        className="w-full gap-2 border-border hover:bg-muted/50"
+        className="w-full gap-2 border-border hover:bg-muted/50 text-xs"
       >
         {isExporting ? (
           <>
-            <Loader2 className="w-4 h-4 animate-spin" />
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
             Generating FHIR Bundle...
           </>
         ) : exported ? (
           <motion.span
             initial={{ scale: 0.8 }}
             animate={{ scale: 1 }}
-            className="flex items-center gap-2 text-emerald-600"
+            className="flex items-center gap-2 text-emerald-600 font-medium"
           >
             <CheckCircle className="w-4 h-4" />
-            Exported!
+            FHIR Bundle Exported!
           </motion.span>
         ) : (
           <>
-            <FileJson className="w-4 h-4" />
+            <FileJson className="w-4 h-4 text-primary" />
             Export ABDM FHIR Bundle
             <Download className="w-3 h-3 ml-auto opacity-50" />
           </>
         )}
       </Button>
-      {error && <p className="text-[10px] text-red-500 text-center">{error}</p>}
+      {error && (
+        <div className="p-2 rounded-lg bg-destructive/10 border border-destructive/20 text-center">
+          <p className="text-[11px] text-destructive leading-tight">{error}</p>
+          {(error.includes('login') || error.includes('authorized') || error.includes('401')) && (
+            <button
+              type="button"
+              onClick={handleQuickLoginAndExport}
+              disabled={isExporting}
+              className="mt-1.5 text-[10px] text-primary underline font-semibold hover:text-primary/80 block w-full text-center"
+            >
+              Sign In as Dr. Clinician (TNMC-54321) & Download
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

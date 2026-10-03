@@ -40,11 +40,26 @@ export function ConsultationTable({ consultations, onSelect }: { consultations: 
                 {c.result?.clinical_summary?.chief_complaint || 'N/A'}
               </TableCell>
               <TableCell>
-                {c.result?.priority?.level ? (
-                  <PriorityBadge level={c.result.priority.level} size="sm" />
-                ) : (
-                  <span className="text-muted-foreground">Unknown</span>
-                )}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {c.result?.priority?.level ? (
+                    <PriorityBadge level={c.result.priority.level} size="sm" />
+                  ) : (
+                    <span className="text-muted-foreground">Unknown</span>
+                  )}
+                  {c.result?.priority?.urgency_tier && (
+                    <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${
+                      c.result.priority.urgency_tier === 'emergency'
+                        ? 'bg-destructive text-white'
+                        : c.result.priority.urgency_tier === 'doctor_today'
+                        ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/25'
+                        : c.result.priority.urgency_tier === 'doctor_soon'
+                        ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border border-blue-500/25'
+                        : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25'
+                    }`}>
+                      {c.result.priority.urgency_tier.replace('_', ' ')}
+                    </span>
+                  )}
+                </div>
               </TableCell>
             </TableRow>
           ))}

@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { usePipeline, PIPELINE_STAGES } from '@/hooks/use-pipeline';
 import { PipelineFlow } from '@/components/pipeline/pipeline-flow';
@@ -10,20 +10,28 @@ import { AlertCircle } from 'lucide-react';
 export default function ProcessingPage() {
   const router = useRouter();
   const { processAudio, isProcessing, currentStage, stageProgress, consultationId, error, reset } = usePipeline();
-  const [hasStarted, setHasStarted] = useState(false);
+  const hasStartedRef = useRef(false);
+  const cachedPayloadRef = useRef<any>(null);
 
   useEffect(() => {
-    if (hasStarted) return;
+    // Prevent duplicate execution from React StrictMode or re-renders
+    if (hasStartedRef.current) return;
     
     const payloadStr = sessionStorage.getItem('grannus_pipeline_payload');
     if (!payloadStr) {
-      router.push('/input');
+      if (!hasStartedRef.current && !consultationId && !isProcessing) {
+        router.push('/input');
+      }
       return;
     }
 
+    // Set synchronous flag and consume payload immediately to guarantee single execution
+    hasStartedRef.current = true;
+    sessionStorage.removeItem('grannus_pipeline_payload');
+
     try {
       const payload = JSON.parse(payloadStr);
-      setHasStarted(true);
+      cachedPayloadRef.current = payload;
 
       // Convert base64 back to Blob
       fetch(payload.audio)
@@ -39,18 +47,21 @@ export default function ProcessingPage() {
             known_conditions: payload.known_conditions,
             current_medications: payload.current_medications
           });
+        })
+        .catch(fetchErr => {
+          console.error("Audio blob conversion failed:", fetchErr);
+          router.push('/input');
         });
     } catch (err) {
       console.error(err);
       router.push('/input');
     }
-  }, [hasStarted, router, processAudio]);
+  }, [router, processAudio, consultationId, isProcessing]);
 
   useEffect(() => {
     if (consultationId && !isProcessing) {
       // Small delay to show completion before navigation
       const timer = setTimeout(() => {
-        sessionStorage.removeItem('grannus_pipeline_payload');
         router.push(`/results?id=${consultationId}`);
       }, 1500);
       return () => clearTimeout(timer);
@@ -65,7 +76,13 @@ export default function ProcessingPage() {
 
   const handleRetry = () => {
     reset();
-    setHasStarted(false); // will re-trigger the initial effect
+    hasStartedRef.current = false;
+    if (cachedPayloadRef.current) {
+      sessionStorage.setItem('grannus_pipeline_payload', JSON.stringify(cachedPayloadRef.current));
+      window.location.reload();
+    } else {
+      router.push('/input');
+    }
   };
 
   return (
