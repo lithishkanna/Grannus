@@ -240,7 +240,9 @@ class AudioPreprocessingResult(BaseModel):
 
 
 class AcousticBiomarkerResult(BaseModel):
+    is_experimental: bool = Field(default=True, description="Acoustic biomarkers are experimental and not clinically validated")
     cough_count: int
+    cough_rate: float = Field(ge=0.0, description="Coughs per minute")
     wheeze_detected: bool
     wheeze_ratio: float = Field(ge=0.0, le=1.0)
     breathlessness_pauses: int

@@ -27,7 +27,15 @@
   "num_existing_conditions",
   "has_medications",
   "has_allergies",
+  "severity_unknown",
+  "num_low_confidence_symptoms",
+  "num_safety_flags",
+  "has_critical_safety_flag",
   "age_group",
   "gender_male",
-  "gender_female"
+  "gender_female",
+  "age_missing",
+  "biomarker_cough_rate",
+  "biomarker_wheeze_ratio",
+  "biomarker_distress_score"
 ]

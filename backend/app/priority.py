@@ -22,6 +22,7 @@ from app.schemas import (
     SafetyScreening,
     StructuredMedicalSummary,
     Symptom,
+    Severity,
 )
 
 logger = logging.getLogger("rural_care.priority")
@@ -43,7 +44,58 @@ _HIGH_RISK_SYMPTOM_WEIGHT = {
     "severe bleeding": 4.0,
     "loss of consciousness": 4.0,
     "fever": 0.5,
+    "snakebite": 4.0,
+    "scorpion sting": 3.0,
+    "dog bite": 2.0,
+    "burns": 2.5,
+    "head injury": 4.0,
+    "heart attack": 4.0,
+    "cyanosis": 4.0,
+    "poisoning": 4.0,
+    "pesticide poisoning": 4.0,
 }
+
+_HIGH_RISK_SYMPTOMS = {
+    "chest pain",
+    "difficulty breathing",
+    "shortness of breath",
+    "breathlessness",
+    "severe bleeding",
+    "heavy bleeding",
+    "loss of consciousness",
+    "fainting",
+    "seizure",
+    "convulsion",
+    "fits",
+    "stroke",
+    "poisoning",
+    "snakebite", "scorpion sting", "dog bite", "burns", "head injury",
+    "heart attack", "cyanosis", "pesticide poisoning",
+    "can't breathe", "cannot breathe", "gasping", "choking",
+}
+
+
+def apply_floor(
+    level: PriorityLevel,
+    safety_screening: Optional[SafetyScreening],
+) -> PriorityLevel:
+    """
+    Ensure the final priority level cannot be lower than deterministic safety flags:
+      - Any 'critical' flag -> at least HIGH
+      - Any 'high' flag     -> at least MEDIUM
+    """
+    if not safety_screening or not safety_screening.red_flags:
+        return level
+
+    has_critical = any(getattr(f, "severity", None) == "critical" for f in safety_screening.red_flags)
+    has_high = any(getattr(f, "severity", None) == "high" for f in safety_screening.red_flags)
+
+    if has_critical:
+        return PriorityLevel.HIGH
+    if has_high and level == PriorityLevel.LOW:
+        return PriorityLevel.MEDIUM
+
+    return level
 
 
 def _score_symptom(symptom: Symptom) -> float:
@@ -58,7 +110,12 @@ def _score_symptom(symptom: Symptom) -> float:
         )
     if symptom.frequency and getattr(symptom.frequency, "value", str(symptom.frequency)).lower() in ("continuous", "frequent"):
         score += 0.5
-    score *= max(symptom.confidence, 0.2)
+
+    # 0.6: Do NOT discount high-risk symptoms by confidence. Uncertain chest pain
+    # or breathing difficulty must retain full score so it escalates to at least MEDIUM/HIGH.
+    is_high_risk = name in _HIGH_RISK_SYMPTOMS or _HIGH_RISK_SYMPTOM_WEIGHT.get(name, 0.0) >= 3.0
+    if not is_high_risk:
+        score *= max(symptom.confidence, 0.2)
     return score
 
 
@@ -67,6 +124,153 @@ def _score_summary(summary: StructuredMedicalSummary) -> float:
     score = sum(_score_symptom(s) for s in summary.symptoms)
     score += 1.5 * len(summary.red_flags)
     return round(score, 2)
+
+
+# Patient-context escalation rules
+def _age_escalation(patient_context: dict, summary: StructuredMedicalSummary) -> tuple[float, list[str]]:
+    """Apply age-aware escalation rules. Returns (bonus_score, reasons)."""
+    extra_score = 0.0
+    reasons = []
+    
+    age_raw = patient_context.get("age")
+    if age_raw is None:
+        return extra_score, reasons
+    
+    try:
+        age_str = str(age_raw).strip().lower()
+        # Handle infant age in months
+        if any(unit in age_str for unit in ["month", "week", "day", "mth"]):
+            import re
+            digits = re.findall(r"\d+", age_str)
+            if digits:
+                age_months = float(digits[0])
+                # Convert to years for scoring
+                age = age_months / 12.0
+            else:
+                return extra_score, reasons
+        else:
+            import re
+            digits = re.findall(r"\d+", age_str)
+            if digits:
+                age = float(digits[0])
+            else:
+                return extra_score, reasons
+    except (ValueError, TypeError):
+        return extra_score, reasons
+    
+    # Infant rules (age < 1 year)
+    if age < 1:
+        # Any symptom in infants is elevated
+        fever = any(s.name.lower() == "fever" for s in summary.symptoms if not s.negated)
+        if fever:
+            extra_score += 4.0  # Infant fever is always critical
+            reasons.append(f"Age escalation: infant fever (age={age:.1f}y) - critical")
+        else:
+            extra_score += 2.0  # All infant presentations escalated
+            reasons.append(f"Age escalation: infant (age={age:.1f}y) - elevated")
+    
+    # Children under 5
+    elif age < 5:
+        fever = any(s.name.lower() == "fever" for s in summary.symptoms if not s.negated)
+        diarrhea = any(s.name.lower() == "diarrhea" for s in summary.symptoms if not s.negated)
+        if fever:
+            extra_score += 2.0
+            reasons.append(f"Age escalation: child fever (age={age:.0f}y) - elevated")
+        if diarrhea:
+            extra_score += 1.5
+            reasons.append(f"Age escalation: child diarrhea (age={age:.0f}y) - dehydration risk")
+        extra_score += 0.5  # Baseline child escalation
+    
+    # Elderly (>= 60)
+    elif age >= 60:
+        extra_score += 1.0  # Baseline elderly escalation
+        reasons.append(f"Age escalation: elderly (age={age:.0f}y)")
+        # Elderly with fever
+        fever = any(s.name.lower() == "fever" for s in summary.symptoms if not s.negated)
+        if fever:
+            extra_score += 1.0
+            reasons.append(f"Age escalation: elderly fever (age={age:.0f}y) - elevated")
+    
+    return extra_score, reasons
+
+
+def _pregnancy_escalation(patient_context: dict, summary: StructuredMedicalSummary) -> tuple[float, list[str]]:
+    """Check for pregnancy and apply obstetric red flag escalation."""
+    extra_score = 0.0
+    reasons = []
+    
+    # Detect pregnancy from patient_context
+    is_pregnant = str(patient_context.get("is_pregnant", "")).strip().lower() in ("yes", "true", "1")
+    if not is_pregnant:
+        is_pregnant = str(patient_context.get("pregnancy", "")).strip().lower() in ("yes", "true", "1")
+    if not is_pregnant:
+        context_str = " ".join(f"{v}".lower() for v in patient_context.values())
+        conditions_str = " ".join(summary.existing_conditions).lower()
+        history_str = (summary.relevant_history or "").lower()
+        combined = f"{context_str} {conditions_str} {history_str}"
+        if any(pw in combined for pw in ["pregnant", "pregnancy", "trimester", "gestation"]):
+            is_pregnant = True
+    
+    if not is_pregnant:
+        return extra_score, reasons
+    
+    extra_score += 1.0  # Baseline pregnancy escalation
+    reasons.append("Pregnancy escalation: pregnant patient")
+    
+    # Obstetric red flags
+    for symptom in summary.symptoms:
+        if symptom.negated:
+            continue
+        name = symptom.name.lower()
+        if "bleeding" in name:
+            extra_score += 4.0
+            reasons.append("Obstetric emergency: bleeding in pregnancy")
+        if "abdominal pain" in name or "stomach pain" in name:
+            extra_score += 2.0
+            reasons.append("Obstetric concern: abdominal pain in pregnancy")
+        if "headache" in name and symptom.severity in (Severity.SEVERE, Severity.UNBEARABLE):
+            extra_score += 2.0
+            reasons.append("Obstetric concern: severe headache in pregnancy (pre-eclampsia risk)")
+    
+    return extra_score, reasons
+
+
+_ESCALATING_COMORBIDITIES = {
+    "diabetes", "sugar", "diabetic", "type 1 diabetes", "type 2 diabetes",
+    "hypertension", "bp", "high blood pressure", "high bp",
+    "heart disease", "cardiac", "heart condition", "heart failure",
+    "immunocompromised", "hiv", "aids", "cancer", "chemotherapy",
+    "kidney disease", "renal", "dialysis",
+    "liver disease", "cirrhosis",
+    "asthma", "copd", "lung disease",
+}
+
+def _comorbidity_escalation(patient_context: dict, summary: StructuredMedicalSummary) -> tuple[float, list[str]]:
+    """Apply comorbidity-based escalation."""
+    extra_score = 0.0
+    reasons = []
+    
+    # Collect all known conditions from patient_context and summary
+    conditions = []
+    known = patient_context.get("known_conditions", "")
+    if known and str(known).strip().lower() not in ("none", "nil", "no", "na", "n/a", ""):
+        conditions.extend([c.strip().lower() for c in str(known).split(",")])
+    conditions.extend([c.strip().lower() for c in summary.existing_conditions])
+    
+    matched = set()
+    for cond in conditions:
+        if cond in ("none", "nil", "no", "na", "n/a", ""):
+            continue
+        for escalating in _ESCALATING_COMORBIDITIES:
+            if escalating in cond or cond in escalating:
+                matched.add(cond)
+                break
+    
+    if matched:
+        extra_score += 1.0 * min(len(matched), 3)  # Cap at 3.0
+        reasons.append(f"Comorbidity escalation: {', '.join(list(matched)[:3])}")
+    
+    return extra_score, reasons
 
 
 def assess_priority(
@@ -87,6 +291,17 @@ def assess_priority(
     # 2. Calculate fallback rule score
     rule_score = _score_summary(summary)
     triggered_rules = [f.reason for f in safety_screening.red_flags]
+
+    # Phase 1: Patient-context escalation rules
+    age_bonus, age_reasons = _age_escalation(patient_context, summary)
+    preg_bonus, preg_reasons = _pregnancy_escalation(patient_context, summary)
+    comorbidity_bonus, comorbidity_reasons = _comorbidity_escalation(patient_context, summary)
+
+    context_bonus = age_bonus + preg_bonus + comorbidity_bonus
+    context_reasons = age_reasons + preg_reasons + comorbidity_reasons
+
+    rule_score += context_bonus
+    triggered_rules.extend(context_reasons)
 
     # 3. Check for Emergency / Safety Override
     if safety_screening.override_priority or safety_screening.has_critical_flags:
@@ -130,6 +345,27 @@ def assess_priority(
                 confidence = max(confidence, 0.6)
                 reasons = reasons + [f"Safety floor: rule-based score {rule_score:.1f} conflicts with ML LOW"]
 
+            # 0.1 Apply deterministic safety floor (high flag -> at least MEDIUM, critical -> HIGH)
+            floored_level = apply_floor(level, safety_screening)
+            if floored_level != level:
+                logger.warning("apply_floor elevated ML priority from %s to %s", level, floored_level)
+                reasons = reasons + [f"Safety floor applied: elevated from {level.value} to {floored_level.value} due to deterministic safety flag"]
+                level = floored_level
+                confidence = max(confidence, 0.8)
+
+            # 0.3 Insufficient input floor: empty extraction never yields LOW
+            active_symptoms = [s for s in summary.symptoms if not s.negated]
+            if len(active_symptoms) == 0 and not safety_screening.red_flags and level == PriorityLevel.LOW:
+                logger.warning("Empty extraction floor elevated ML priority from LOW to MEDIUM")
+                level = PriorityLevel.MEDIUM
+                confidence = max(confidence, 0.6)
+                reasons = reasons + ["Empty extraction floor: no active symptoms detected, routing to MEDIUM for clinician review"]
+
+            # Phase 1: missing_critical_info floor to MEDIUM
+            if safety_screening.missing_critical_info and level == PriorityLevel.LOW:
+                level = PriorityLevel.MEDIUM
+                reasons.append(f"Missing critical info floor: {'; '.join(safety_screening.missing_critical_info)}")
+
             logger.info("ML priority assessment level=%s conf=%.2f reasons=%s", level, confidence, reasons)
             return PriorityAssessment(
                 level=level,
@@ -154,10 +390,33 @@ def assess_priority(
         level = PriorityLevel.LOW
         conf = 0.85
 
+    # 0.1 Apply deterministic safety floor to rule engine output
+    floored_level = apply_floor(level, safety_screening)
+    if floored_level != level:
+        logger.warning("apply_floor elevated fallback rule priority from %s to %s", level, floored_level)
+        conf = max(conf, 0.8)
+        level = floored_level
+
+    # 0.3 Insufficient input floor: empty extraction never yields LOW
+    active_symptoms = [s for s in summary.symptoms if not s.negated]
+    if len(active_symptoms) == 0 and not safety_screening.red_flags and level == PriorityLevel.LOW:
+        logger.warning("Empty extraction floor elevated fallback rule priority from LOW to MEDIUM")
+        level = PriorityLevel.MEDIUM
+        conf = max(conf, 0.6)
+
     fallback_reasons = [f"Rule-based score {rule_score:.2f}"]
+    if floored_level != level:
+        fallback_reasons.append(f"Safety floor applied: elevated to {level.value} due to deterministic safety flag")
+    if len(active_symptoms) == 0 and not safety_screening.red_flags:
+        fallback_reasons.append("Empty extraction floor: no active symptoms detected, routing to MEDIUM for clinician review")
     for s in summary.symptoms:
         if not s.negated and s.confidence >= 0.3:
             fallback_reasons.append(f"Reported symptom: {s.name}")
+
+    # Phase 1: missing_critical_info floor to MEDIUM
+    if safety_screening.missing_critical_info and level == PriorityLevel.LOW:
+        level = PriorityLevel.MEDIUM
+        fallback_reasons.append(f"Missing critical info floor: {'; '.join(safety_screening.missing_critical_info)}")
 
     logger.info("Rule-based fallback priority assessment level=%s score=%.2f", level, rule_score)
     return PriorityAssessment(

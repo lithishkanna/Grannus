@@ -34,10 +34,11 @@ async def _call_sarvam_stt(
     filename: str,
     mode: str,
     language_code: str,
+    content_type: str = "audio/wav",
 ) -> dict:
     settings = get_settings()
 
-    files = {"file": (filename, audio_bytes)}
+    files = {"file": (filename, audio_bytes, content_type)}
     data = {
         "model": settings.sarvam_stt_model,
         "mode": mode,  # "transcribe" | "translate"
@@ -81,6 +82,7 @@ async def transcribe_and_translate(
     audio_bytes: bytes,
     filename: str,
     language_code: str = "unknown",
+    content_type: str = "audio/wav",
 ) -> TranscriptionResult:
     """
     Run the patient's audio through Sarvam Saaras twice (native + English)
@@ -94,7 +96,7 @@ async def transcribe_and_translate(
 
     async with httpx.AsyncClient() as client:
         native = await _call_sarvam_stt(
-            client, audio_bytes, filename, mode="transcribe", language_code=language_code
+            client, audio_bytes, filename, mode="transcribe", language_code=language_code, content_type=content_type
         )
         
         native_transcript = native.get("transcript", "")
@@ -111,7 +113,7 @@ async def transcribe_and_translate(
             translate_lang = language_code
             
         english = await _call_sarvam_stt(
-            client, audio_bytes, filename, mode="translate", language_code=translate_lang
+            client, audio_bytes, filename, mode="translate", language_code=translate_lang, content_type=content_type
         )
         
         english_transcript = english.get("transcript", "")

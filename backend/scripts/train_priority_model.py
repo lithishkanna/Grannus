@@ -57,7 +57,23 @@ def generate_synthetic_data(num_samples: int = 500):
             features["max_duration_days"] = random.uniform(0.5, 3.0)
             y.append("LOW")
             
-        features["age_group"] = float(random.randint(1, 4))
+        features["severity_unknown"] = 1.0 if random.random() < 0.1 else 0.0
+        features["num_low_confidence_symptoms"] = float(random.randint(0, 2))
+        
+        if random.random() < 0.2:
+            features["num_safety_flags"] = float(random.randint(1, 3))
+            features["has_critical_safety_flag"] = 1.0 if random.random() < 0.5 else 0.0
+            
+        if random.random() < 0.3:
+            features["biomarker_cough_rate"] = random.uniform(5.0, 30.0)
+            features["biomarker_wheeze_ratio"] = random.uniform(0.1, 0.9)
+            features["biomarker_distress_score"] = random.uniform(0.2, 0.8)
+            
+        if random.random() < 0.1:
+            features["age_group"] = -1.0
+            features["age_missing"] = 1.0
+        else:
+            features["age_group"] = float(random.randint(0, 5))
         if random.random() > 0.5:
             features["gender_male"] = 1.0
         else:

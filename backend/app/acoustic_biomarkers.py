@@ -14,7 +14,9 @@ def analyze_audio(audio_data: np.ndarray, sample_rate: int) -> AcousticBiomarker
     """
     if len(audio_data) == 0:
         return AcousticBiomarkerResult(
+            is_experimental=True,
             cough_count=0,
+            cough_rate=0.0,
             wheeze_detected=False,
             wheeze_ratio=0.0,
             breathlessness_pauses=0,
@@ -41,6 +43,19 @@ def analyze_audio(audio_data: np.ndarray, sample_rate: int) -> AcousticBiomarker
     
     # Compute RMS energy in frames
     num_frames = (len(audio_data) - frame_length) // hop_length + 1
+    if num_frames <= 0:
+        return AcousticBiomarkerResult(
+            is_experimental=True,
+            cough_count=0,
+            cough_rate=0.0,
+            wheeze_detected=False,
+            wheeze_ratio=0.0,
+            breathlessness_pauses=0,
+            speech_dyspnea_index=0.0,
+            respiratory_distress_score=0.0,
+            distress_level='none'
+        )
+
     rms_energy = np.zeros(num_frames)
     for i in range(num_frames):
         start = i * hop_length
@@ -48,34 +63,53 @@ def analyze_audio(audio_data: np.ndarray, sample_rate: int) -> AcousticBiomarker
         rms_energy[i] = np.sqrt(np.mean(audio_data[start:end]**2))
         
     median_energy = np.median(rms_energy)
-    threshold = 3 * median_energy
+    if median_energy < 1e-10:
+        threshold = 0.01
+    else:
+        threshold = 3 * median_energy
     
     peaks, _ = scipy.signal.find_peaks(rms_energy, height=threshold, distance=int(0.3 / 0.025))
     cough_count = len(peaks)
+    cough_rate = cough_count / (duration / 60.0) if duration > 0 else 0.0
     
     # 2. Wheeze Detection
-    # Use scipy.signal.spectrogram
     f, t, Sxx = scipy.signal.spectrogram(audio_data, fs=sample_rate, nperseg=int(0.05*sample_rate), noverlap=int(0.025*sample_rate))
     
-    # Wheezing frequency: 100-500Hz
-    wheeze_band = (f >= 100) & (f <= 500)
+    # Wheezing frequency: 200-800Hz
+    wheeze_band = (f >= 200) & (f <= 800)
     
-    if np.sum(Sxx) > 0:
-        wheeze_energy = np.sum(Sxx[wheeze_band, :], axis=0)
-        total_energy = np.sum(Sxx, axis=0)
+    if np.sum(Sxx) > 0 and np.any(wheeze_band):
+        Sxx_wheeze = Sxx[wheeze_band, :]
+        arith_mean = np.mean(Sxx_wheeze, axis=0)
+        eps = 1e-10
+        geo_mean = np.exp(np.mean(np.log(Sxx_wheeze + eps), axis=0))
+        flatness = np.divide(geo_mean, arith_mean, out=np.zeros_like(arith_mean), where=arith_mean>eps)
         
-        # Avoid division by zero
-        ratio_frames = np.divide(wheeze_energy, total_energy, out=np.zeros_like(wheeze_energy), where=total_energy!=0)
-        wheeze_ratio = float(np.mean(ratio_frames))
+        # significant energy in wheeze band
+        wheeze_energy = np.sum(Sxx_wheeze, axis=0)
+        total_energy_per_frame = np.sum(Sxx, axis=0)
+        significant_energy = wheeze_energy > (0.01 * np.max(total_energy_per_frame))
+        
+        tonal_frames = (flatness < 0.3) & significant_energy & (arith_mean > eps)
+        wheeze_ratio = float(np.mean(tonal_frames))
     else:
         wheeze_ratio = 0.0
         
-    wheeze_detected = wheeze_ratio > 0.2
+    wheeze_detected = wheeze_ratio > 0.15
     
     # 3. Breathlessness Score
     # Pauses > 1.5 seconds
     pause_threshold = median_energy * 0.5
-    is_pause = rms_energy < pause_threshold
+    is_pause_raw = rms_energy < pause_threshold
+    
+    # Trim leading and trailing silence
+    speech_frames = np.where(rms_energy > (median_energy * 0.3))[0]
+    if len(speech_frames) > 0:
+        start_idx = speech_frames[0]
+        end_idx = speech_frames[-1]
+        is_pause = is_pause_raw[start_idx:end_idx + 1]
+    else:
+        is_pause = np.array([])
     
     # Find contiguous pause segments
     breathlessness_pauses = 0
@@ -98,8 +132,8 @@ def analyze_audio(audio_data: np.ndarray, sample_rate: int) -> AcousticBiomarker
     speech_dyspnea_index = total_pause_duration / duration if duration > 0 else 0.0
     
     # 4. Overall Respiratory Distress Score
-    # Normalize cough count: assume 10 is max
-    norm_cough = min(cough_count / 10.0, 1.0)
+    # Normalize cough count: use cough_rate, max 20
+    norm_cough = min(cough_rate / 20.0, 1.0)
     norm_wheeze = min(wheeze_ratio / 0.5, 1.0) # max out at 50% ratio
     norm_dyspnea = min(speech_dyspnea_index / 0.5, 1.0)
     
@@ -117,7 +151,9 @@ def analyze_audio(audio_data: np.ndarray, sample_rate: int) -> AcousticBiomarker
     logger.info(f"Acoustic biomarkers computed: score={respiratory_distress_score:.2f}, level={distress_level}")
 
     return AcousticBiomarkerResult(
+        is_experimental=True,
         cough_count=cough_count,
+        cough_rate=cough_rate,
         wheeze_detected=wheeze_detected,
         wheeze_ratio=float(wheeze_ratio),
         breathlessness_pauses=breathlessness_pauses,
