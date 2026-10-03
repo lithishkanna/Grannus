@@ -6,7 +6,8 @@ Endpoints:
 - POST /api/v1/pipeline/process-audio — Audio triage pipeline
 """
 import logging
-from typing import Optional
+import asyncio
+from typing import Optional, List, Dict, Any
 
 from dotenv import load_dotenv
 
@@ -52,6 +53,13 @@ from app.security.audit_logger import get_audit_logger
 from app.security.data_retention import get_retention_manager
 from app.consent import get_consent_notice, record_patient_consent
 from app.regulatory import CDSCO_SAMD_DECLARATION, EMERGENCY_DISCLAIMER_TEXT, validate_abdm_fhir_bundle
+from app.jobs.job_manager import get_job_manager, JobProgressResponse
+from app.telehealth.clinical_actions import (
+    get_clinical_action_manager,
+    DoctorActionRequest,
+    ActionRecord,
+)
+from app.telehealth.referral_slip import generate_referral_slip, ReferralSlip
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rural_care.api")
@@ -499,3 +507,127 @@ async def export_fhir(
     except Exception as exc:
         logger.exception("Failed to generate FHIR bundle")
         raise HTTPException(status_code=500, detail=f"Failed to generate FHIR bundle: {exc}") from exc
+
+
+# -----------------------------------------------------------------------------
+# Phase 5: Field Pilot Readiness & Telehealth Orchestration Endpoints
+# -----------------------------------------------------------------------------
+
+@app.post("/api/v1/pipeline/submit-audio", status_code=status.HTTP_202_ACCEPTED)
+async def submit_audio_async(
+    request: Request,
+    audio: UploadFile = File(..., description="Patient's voice recording"),
+    language_code: str = Form("unknown"),
+    doctor_preferred_language: str = Form("en-IN"),
+    age: str = Form(None),
+    gender: str = Form(None),
+    reported_duration: str = Form(None),
+    known_conditions: str = Form(None),
+    current_medications: str = Form(None),
+):
+    """
+    Non-blocking asynchronous audio intake endpoint returning 202 Accepted.
+    Eliminates HTTP gateway timeouts on slow / low-bandwidth 2G/3G rural networks.
+    """
+    await rate_limit_patient_intake(request)
+
+    settings = get_settings()
+    if not settings.sarvam_api_key or not settings.gemini_api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Server configuration error: missing SARVAM_API_KEY / GEMINI_API_KEY.",
+        )
+
+    audio_bytes = await audio.read()
+    safe_filename = sanitize_filename(audio.filename)
+    validate_audio_upload(audio_bytes, safe_filename, settings.max_audio_bytes)
+
+    # Schedule raw audio deletion under DPDP 72-hour retention policy
+    get_retention_manager().schedule_audio_deletion(safe_filename, hours=72)
+
+    patient_context = {
+        "age": age,
+        "gender": gender,
+        "reported_duration": reported_duration,
+        "known_conditions": known_conditions,
+        "current_medications": current_medications,
+    }
+
+    job_mgr = get_job_manager()
+    job_id = job_mgr.create_job()
+
+    # Dispatch to background task worker
+    asyncio.create_task(
+        job_mgr.execute_job(
+            job_id=job_id,
+            audio_bytes=audio_bytes,
+            filename=safe_filename,
+            language_code=language_code,
+            patient_context=patient_context,
+            doctor_preferred_language=doctor_preferred_language,
+        )
+    )
+
+    return {
+        "job_id": job_id,
+        "status": "QUEUED",
+        "poll_url": f"/api/v1/pipeline/job-status/{job_id}",
+        "message": "Consultation audio accepted for asynchronous triage processing.",
+    }
+
+
+@app.get("/api/v1/pipeline/job-status/{job_id}", response_model=JobProgressResponse)
+def get_job_status(job_id: str):
+    """
+    Poll stage-by-stage progress of an asynchronous consultation triage job.
+    """
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job ID '{job_id}' not found or expired.",
+        )
+    return job.to_response()
+
+
+@app.post("/api/v1/consultations/action", response_model=ActionRecord)
+def record_consultation_action(
+    req: DoctorActionRequest,
+    current_doctor: AuthenticatedUser = Depends(require_verified_doctor),
+):
+    """
+    Record clinical decision (confirm triage, priority override, prescribe, refer).
+    Restricted to verified Registered Medical Practitioners (RMPs).
+    """
+    return get_clinical_action_manager().record_action(req, current_doctor)
+
+
+@app.get("/api/v1/consultations/{consultation_id}/actions", response_model=List[ActionRecord])
+def get_consultation_action_history(
+    consultation_id: str,
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.ADMIN])),
+):
+    """Retrieve complete clinical decision and referral history for a consultation."""
+    return get_clinical_action_manager().get_consultation_actions(consultation_id)
+
+
+class ReferralSlipRequest(BaseModel):
+    result: PipelineResult
+    clinical_notes: Optional[str] = None
+    referral_facility: Optional[str] = None
+
+
+@app.post("/api/v1/consultations/referral-slip", response_model=ReferralSlip)
+def create_clinical_referral_slip(
+    req: ReferralSlipRequest,
+    current_doctor: AuthenticatedUser = Depends(require_verified_doctor),
+):
+    """
+    Generate official bilingual referral slip / e-prescription for PHC / CHC patient handoff.
+    """
+    return generate_referral_slip(
+        result=req.result,
+        doctor=current_doctor,
+        referral_facility=req.referral_facility,
+        clinical_notes=req.clinical_notes,
+    )
