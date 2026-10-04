@@ -201,6 +201,7 @@ export async function processAudio(params: {
   reported_duration?: string;
   known_conditions?: string;
   current_medications?: string;
+  profile_id?: string;
 }): Promise<PipelineResult> {
   const formData = new FormData();
   formData.append('audio', params.audio, 'recording.webm');
@@ -211,6 +212,7 @@ export async function processAudio(params: {
   if (params.reported_duration) formData.append('reported_duration', params.reported_duration);
   if (params.known_conditions) formData.append('known_conditions', params.known_conditions);
   if (params.current_medications) formData.append('current_medications', params.current_medications);
+  if (params.profile_id) formData.append('profile_id', params.profile_id);
 
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const response = await fetch(`${baseUrl}/api/v1/pipeline/process-audio`, {
@@ -356,6 +358,7 @@ export async function submitAudioAsync(params: {
   reported_duration?: string;
   known_conditions?: string;
   current_medications?: string;
+  profile_id?: string;
 }): Promise<{ job_id: string; status: string; poll_url: string; message: string }> {
   const formData = new FormData();
   formData.append('audio', params.audio, 'recording.webm');
@@ -366,6 +369,7 @@ export async function submitAudioAsync(params: {
   if (params.reported_duration) formData.append('reported_duration', params.reported_duration);
   if (params.known_conditions) formData.append('known_conditions', params.known_conditions);
   if (params.current_medications) formData.append('current_medications', params.current_medications);
+  if (params.profile_id) formData.append('profile_id', params.profile_id);
 
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const response = await fetch(`${baseUrl}/api/v1/pipeline/submit-audio`, {

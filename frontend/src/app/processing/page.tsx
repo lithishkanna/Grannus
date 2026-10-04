@@ -45,7 +45,8 @@ export default function ProcessingPage() {
             gender: payload.gender,
             reported_duration: payload.reported_duration,
             known_conditions: payload.known_conditions,
-            current_medications: payload.current_medications
+            current_medications: payload.current_medications,
+            profile_id: payload.profile_id,
           });
         })
         .catch(fetchErr => {

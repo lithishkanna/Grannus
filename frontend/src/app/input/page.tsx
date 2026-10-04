@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AudioRecorder } from '@/components/voice/audio-recorder';
 import { FileUploader } from '@/components/voice/file-uploader';
-import { SUPPORTED_LANGUAGES } from '@/lib/api';
+import { SUPPORTED_LANGUAGES, getActiveProfile, PatientProfile } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -18,6 +18,7 @@ export default function VoiceInputPage() {
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [language, setLanguage] = useState('unknown');
   const [doctorLanguage, setDoctorLanguage] = useState('en-IN');
+  const [activeProfile, setActiveProfileState] = useState<PatientProfile | null>(null);
   
   // DPDP Consent state
   const [showConsentModal, setShowConsentModal] = useState(false);
@@ -32,7 +33,18 @@ export default function VoiceInputPage() {
   const [medications, setMedications] = useState('');
 
   const [isClient, setIsClient] = useState(false);
-  useEffect(() => { setIsClient(true); }, []);
+  useEffect(() => {
+    setIsClient(true);
+    const profile = getActiveProfile();
+    if (profile) {
+      setActiveProfileState(profile);
+      if (profile.preferred_language) setLanguage(profile.preferred_language);
+      if (profile.age) setAge(String(profile.age));
+      if (profile.gender) setGender(profile.gender);
+      if (profile.known_conditions?.length) setConditions(profile.known_conditions.join(', '));
+      if (profile.medications?.length) setMedications(profile.medications.join(', '));
+    }
+  }, []);
 
   const executePipelineSubmission = (blobToSubmit: Blob) => {
     const reader = new FileReader();
@@ -48,6 +60,7 @@ export default function VoiceInputPage() {
         reported_duration: duration,
         known_conditions: conditions,
         current_medications: medications,
+        profile_id: activeProfile?.id,
         dpdp_consent_verified: true,
       };
       
@@ -81,6 +94,47 @@ export default function VoiceInputPage() {
         <h1 className="text-4xl font-semibold text-foreground mb-3">Voice Input</h1>
         <p className="text-muted-foreground text-lg">Record or upload a patient consultation audio</p>
       </div>
+
+      {activeProfile ? (
+        <div className="mb-8 p-4 bg-primary/10 border border-primary/20 rounded-2xl flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm shadow-sm">
+              {activeProfile.full_name.charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <p className="text-[11px] text-muted-foreground uppercase font-semibold tracking-wider">Active Patient Profile</p>
+              <h3 className="text-base font-semibold text-foreground">
+                {activeProfile.full_name}{' '}
+                <span className="text-xs font-normal text-muted-foreground">
+                  ({activeProfile.relation}{activeProfile.age ? `, ${activeProfile.age} yrs` : ''})
+                </span>
+              </h3>
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push('/login')}
+            className="text-xs rounded-xl h-8 font-medium"
+          >
+            Switch Profile
+          </Button>
+        </div>
+      ) : (
+        <div className="mb-8 p-3 bg-muted/60 border border-border rounded-2xl flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">Consulting as Guest Patient (No profile selected)</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push('/login')}
+            className="text-xs text-primary font-medium hover:underline h-7"
+          >
+            Sign In / Choose Family Member →
+          </Button>
+        </div>
+      )}
 
       <div className="mb-12">
         <Tabs defaultValue="record" className="w-full">

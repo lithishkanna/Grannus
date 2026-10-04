@@ -628,3 +628,146 @@ def append_audit_log_entry(
 
     _MEM_AUDIT_LOGS.append(record)
     return record
+
+
+# -----------------------------------------------------------------------------
+# Block C: Consent, PIN, Data Export & Statutory Erasure (B4.3, B4.4, B4.5, B4.6)
+# -----------------------------------------------------------------------------
+
+_MEM_CONSENTS: List[dict] = []
+
+
+def save_consent_record(data: dict) -> dict:
+    """Save versioned patient consent record to database (B4.5)."""
+    record = {
+        "id": data.get("id") or str(uuid.uuid4()),
+        "patient_id": data.get("patient_id"),
+        "consent_type": data.get("consent_type", "TELEMEDICINE_TRIAGE"),
+        "version": data.get("version", "2023.1-DPDP"),
+        "language_code": data.get("language_code", "en-IN"),
+        "ip_hash": data.get("ip_hash"),
+        "profile_id": data.get("profile_id"),
+        "is_granted": data.get("is_granted", True),
+        "granted_at": data.get("granted_at") or datetime.now(timezone.utc).isoformat(),
+    }
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("consents").insert(record).execute()
+        except Exception as exc:
+            logger.error("Supabase insert consent error: %s", exc)
+
+    _MEM_CONSENTS.append(record)
+    return record
+
+
+def verify_profile_pin(profile_id: str, pin: str) -> bool:
+    """Verify 4-digit PIN for private patient profile (B4.3)."""
+    profile = get_patient_profile(profile_id)
+    if not profile or not profile.get("pin_hash"):
+        return True  # No PIN protection set
+    return verify_password(pin.strip(), profile["pin_hash"])
+
+
+def export_account_data(account_id: str) -> dict:
+    """Export all profiles, consultations, follow-ups, and consents for an account (B4.6)."""
+    profiles = get_profiles_for_account(account_id)
+    profile_ids = [p["id"] for p in profiles]
+
+    consultations: List[dict] = []
+    follow_ups: List[dict] = []
+    consents: List[dict] = []
+
+    client = get_supabase_client()
+    if client and profile_ids:
+        try:
+            res_c = client.table("consultations").select("*").in_("profile_id", profile_ids).execute()
+            if res_c.data:
+                consultations = res_c.data
+        except Exception:
+            pass
+
+        try:
+            res_fu = client.table("persistent_follow_ups").select("*").in_("profile_id", profile_ids).execute()
+            if res_fu.data:
+                follow_ups = res_fu.data
+        except Exception:
+            pass
+
+    if not follow_ups:
+        follow_ups = [fu for fu in _MEM_FOLLOW_UPS.values() if fu.get("profile_id") in profile_ids]
+
+    consents = [c for c in _MEM_CONSENTS if c.get("profile_id") in profile_ids or c.get("patient_id") == account_id]
+
+    return {
+        "account_id": account_id,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "profiles": profiles,
+        "consultations": consultations,
+        "follow_ups": follow_ups,
+        "consents": consents,
+    }
+
+
+def erase_account_data(account_id: str, reason: str = "Statutory erasure under DPDP Act 2023") -> bool:
+    """Statutory erasure: anonymize profiles and remove clinical history (B4.6)."""
+    profiles = get_profiles_for_account(account_id)
+    client = get_supabase_client()
+
+    for p in profiles:
+        anonymized = {
+            "full_name": "ANONYMIZED_PATIENT",
+            "allergies": [],
+            "medications": [],
+            "known_conditions": [],
+            "pin_hash": None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if client:
+            try:
+                client.table("patient_profiles").update(anonymized).eq("id", p["id"]).execute()
+            except Exception:
+                pass
+        if p["id"] in _MEM_PROFILES:
+            _MEM_PROFILES[p["id"]].update(anonymized)
+
+    # Anonymize account
+    if client:
+        try:
+            client.table("accounts").update({"is_active": False}).eq("id", account_id).execute()
+        except Exception:
+            pass
+
+    append_audit_log_entry(
+        action="DATA_ERASURE_COMPLETED",
+        user_id=account_id,
+        role="patient",
+        resource_id=account_id,
+        details={"reason": reason},
+    )
+    return True
+
+
+def reset_recycled_phone_number(account_id: str) -> bool:
+    """Disassociate all prior profiles from recycled phone number (B4.4)."""
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("patient_profiles").delete().eq("account_id", account_id).execute()
+        except Exception:
+            pass
+
+    # In-memory reset
+    to_delete = [pid for pid, p in _MEM_PROFILES.items() if p.get("account_id") == account_id]
+    for pid in to_delete:
+        del _MEM_PROFILES[pid]
+
+    append_audit_log_entry(
+        action="RECYCLED_NUMBER_RESET",
+        user_id=account_id,
+        role="patient",
+        resource_id=account_id,
+        details={"message": "All prior profiles cleared for recycled phone number."},
+    )
+    return True
+

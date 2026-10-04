@@ -45,6 +45,7 @@ export function usePipeline() {
     reported_duration?: string;
     known_conditions?: string;
     current_medications?: string;
+    profile_id?: string;
   }) => {
     if (inFlightRef.current) {
       console.warn("processAudio already running; ignoring duplicate call");

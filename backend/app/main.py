@@ -445,6 +445,38 @@ async def create_patient_profile_endpoint(
     return profile
 
 
+class VerifyPinRequest(BaseModel):
+    pin: str
+
+
+@app.post("/api/v1/patient/profiles/{profile_id}/verify-pin")
+def verify_profile_pin_endpoint(
+    profile_id: str,
+    req: VerifyPinRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Verify 4-digit PIN before unlocking private patient profile (B4.3)."""
+    from app.db import verify_profile_pin
+    if not verify_profile_pin(profile_id, req.pin):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect 4-digit PIN for this profile.",
+        )
+    return {"verified": True, "profile_id": profile_id}
+
+
+@app.post("/api/v1/patient/account/reset-recycled")
+def reset_recycled_account(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Clear prior profile associations for recycled phone numbers (B4.4)."""
+    if not current_user.account_id:
+        raise HTTPException(status_code=400, detail="Authenticated patient phone account required.")
+    from app.db import reset_recycled_phone_number
+    reset_recycled_phone_number(current_user.account_id)
+    return {"status": "success", "message": "Recycled phone number profile history reset successfully."}
+
+
 @app.get("/api/v1/consent/notice")
 def consent_notice(language_code: str = "en-IN"):
     """Fetch localized consent notice under India's DPDP Act 2023."""
@@ -453,7 +485,7 @@ def consent_notice(language_code: str = "en-IN"):
 
 @app.post("/api/v1/consent/record")
 def record_consent(req: ConsentRequest, request: Request):
-    """Store timestamped, explicit patient consent before audio processing."""
+    """Store timestamped, explicit patient consent before audio processing (B4.5)."""
     client_ip = request.client.host if request.client else "127.0.0.1"
     try:
         record = record_patient_consent(
@@ -462,6 +494,14 @@ def record_consent(req: ConsentRequest, request: Request):
             client_ip=client_ip,
             explicit_consent=req.explicit_consent,
         )
+        from app.db import save_consent_record
+        save_consent_record({
+            "patient_id": req.patient_id,
+            "version": record.consent_version,
+            "language_code": req.language_code,
+            "ip_hash": record.ip_hash,
+            "is_granted": True,
+        })
         get_audit_logger().log(
             action="RECORD_CONSENT",
             user_id=req.patient_id,
@@ -473,9 +513,41 @@ def record_consent(req: ConsentRequest, request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/v1/patient/data-export")
+def export_patient_data(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Statutory Right to Data Portability & Access under DPDP Act 2023 (B4.6)."""
+    if not current_user.account_id:
+        raise HTTPException(status_code=400, detail="Authenticated account required for data export.")
+    from app.db import export_account_data
+    data = export_account_data(current_user.account_id)
+    get_audit_logger().log(
+        action="PATIENT_DATA_EXPORT",
+        user_id=current_user.user_id,
+        role=current_user.role.value,
+        details={"account_id": current_user.account_id},
+    )
+    return data
+
+
+@app.post("/api/v1/patient/data-erasure")
+def erase_patient_data(
+    req: Optional[ErasureRequest] = None,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Statutory Right to Erasure under Section 12 of DPDP Act 2023 (B4.6)."""
+    if not current_user.account_id:
+        raise HTTPException(status_code=400, detail="Authenticated account required for data erasure.")
+    from app.db import erase_account_data
+    reason = req.reason if req and req.reason else "Statutory erasure under DPDP Act 2023"
+    erase_account_data(current_user.account_id, reason=reason)
+    return {"status": "success", "message": "All patient profiles and identifiable records erased."}
+
+
 @app.post("/api/v1/patient/request-erasure")
 def request_erasure(req: ErasureRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
-    """Statutory Right to Erasure under Section 12 of the DPDP Act 2023."""
+    """Legacy alias for statutory right to erasure."""
     retention_mgr = get_retention_manager()
     erasure_result = retention_mgr.process_patient_erasure(req.patient_id, reason=req.reason or "")
     get_audit_logger().log(
@@ -527,6 +599,7 @@ async def process_audio(
     reported_duration: str = Form(None, description="Optional reported duration"),
     known_conditions: str = Form(None, description="Optional pre-existing medical conditions"),
     current_medications: str = Form(None, description="Optional current medications"),
+    profile_id: Optional[str] = Form(None, description="Optional patient profile ID (B4.2)"),
 ) -> PipelineResult:
     """
     Process patient voice recording through the complete AI triage pipeline.
@@ -562,6 +635,7 @@ async def process_audio(
         "reported_duration": reported_duration,
         "known_conditions": known_conditions,
         "current_medications": current_medications,
+        "profile_id": profile_id,
     }
 
     try:
@@ -788,6 +862,7 @@ async def submit_audio_async(
     reported_duration: str = Form(None),
     known_conditions: str = Form(None),
     current_medications: str = Form(None),
+    profile_id: Optional[str] = Form(None),
 ):
     """
     Non-blocking asynchronous audio intake endpoint returning 202 Accepted.
@@ -815,6 +890,7 @@ async def submit_audio_async(
         "reported_duration": reported_duration,
         "known_conditions": known_conditions,
         "current_medications": current_medications,
+        "profile_id": profile_id,
     }
 
     job_mgr = get_job_manager()
