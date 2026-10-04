@@ -1,8 +1,7 @@
 'use client';
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
-import { PipelineResult } from '@/lib/api';
+import { PipelineResult, getConsultationDetails } from '@/lib/api';
 import { PriorityBadge } from '@/components/results/priority-badge';
 import { SymptomCard } from '@/components/results/symptom-card';
 import { SafetyFlags } from '@/components/results/safety-flags';
@@ -34,14 +33,12 @@ function ResultsContent() {
 
     const fetchResult = async () => {
       try {
-        const { data, error } = await supabase
-          .from('pipeline_results')
-          .select('full_result')
-          .eq('consultation_id', id)
-          .single();
-
-        if (error) throw error;
-        if (data) setResult(data.full_result);
+        const data = await getConsultationDetails(id);
+        if (data && data.full_result) {
+          setResult(data.full_result);
+        } else if (data) {
+          setResult(data);
+        }
       } catch (err) {
         console.error('Error fetching result:', err);
       } finally {

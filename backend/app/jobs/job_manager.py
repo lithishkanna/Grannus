@@ -158,6 +158,53 @@ class JobManager:
             job.result = result
             job.update_stage(JobStatus.COMPLETED, 100, "Consultation triage complete")
 
+            # Route by complaint category and assign to best on-duty doctor (B5.3, B5.8)
+            try:
+                from app.routing import categorize_complaint, select_best_doctor
+                from app.db import save_consultation, save_assignment, get_staff_doctors
+
+                complaint_cat, dept_code, routing_rationale = categorize_complaint(
+                    clinical_summary=result.clinical_summary,
+                    patient_context=patient_context,
+                    safety_screening=result.safety_screening,
+                    urgency_tier=result.priority.urgency_tier,
+                )
+
+                all_doctors = get_staff_doctors()
+                assigned_doc, doc_selection_rationale = select_best_doctor(
+                    doctors=all_doctors,
+                    department_code=dept_code,
+                    patient_language=result.patient_input.language,
+                )
+                assigned_doc_id = assigned_doc.get("id") if assigned_doc else None
+
+                save_consultation(result.request_id, {
+                    "account_id": patient_context.get("account_id"),
+                    "profile_id": patient_context.get("profile_id"),
+                    "status": "triage",
+                    "patient_language": result.patient_input.language,
+                    "urgency_tier": result.priority.urgency_tier,
+                    "department_id": dept_code,
+                    "assigned_doctor_id": assigned_doc_id,
+                    "original_transcript": result.patient_input.transcript_original,
+                    "english_transcript": result.patient_input.transcript_english,
+                    "complaint_category": complaint_cat,
+                    "chief_complaint": result.clinical_summary.chief_complaint if result.clinical_summary else None,
+                    "full_result": result.dict(),
+                })
+
+                if assigned_doc_id:
+                    save_assignment(
+                        consultation_id=result.request_id,
+                        doctor_id=assigned_doc_id,
+                        assigned_by="system_routing",
+                        status="assigned",
+                        reassignment_reason=f"{routing_rationale} {doc_selection_rationale}",
+                        locked_by_name=assigned_doc.get("full_name"),
+                    )
+            except Exception as route_err:
+                logger.warning("Routing failed for async job %s: %s", job_id, route_err)
+
             # Register for follow-up tracking
             try:
                 from app.follow_up import get_follow_up_manager

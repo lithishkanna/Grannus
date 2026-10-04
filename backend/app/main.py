@@ -20,7 +20,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Dep
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.observability.metrics import get_metrics
 
 from app.audio_preprocessing import (
@@ -307,6 +307,7 @@ async def login(req: LoginRequest):
             detail="Email or User ID is required.",
         )
 
+    staff = None
     staff_record = find_staff_user(identifier)
     if staff_record:
         if not req.password:
@@ -345,13 +346,17 @@ async def login(req: LoginRequest):
                 detail="Invalid credentials. Please verify your user ID and password.",
             )
 
+    is_verified_doc = None
+    if staff and role == UserRole.DOCTOR:
+        is_verified_doc = staff.get("is_verified_doctor", True)
+
     if role == UserRole.DOCTOR:
         if not doc_reg:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Doctor registration requires a valid NMC/State Medical Council registration number.",
             )
-        if not validate_doctor_registration(doc_reg):
+        if not is_verified_doc and not validate_doctor_registration(doc_reg):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid medical registration number format. Must be an official NMC or State Council ID.",
@@ -363,6 +368,7 @@ async def login(req: LoginRequest):
         doctor_reg_no=doc_reg,
         state_council=state_council,
         hospital_id=hospital_id,
+        is_verified_doctor=is_verified_doc,
     )
     user = verify_token(token)
 
@@ -646,6 +652,53 @@ async def process_audio(
             patient_context=patient_context,
             doctor_preferred_language=doctor_preferred_language,
         )
+
+        # 3b. Route by complaint category and persist consultation (B5.3, B5.8, F1.1)
+        try:
+            from app.routing import categorize_complaint, select_best_doctor
+            from app.db import save_consultation, save_assignment, get_staff_doctors
+
+            complaint_cat, dept_code, routing_rationale = categorize_complaint(
+                clinical_summary=result.clinical_summary,
+                patient_context=patient_context,
+                safety_screening=result.safety_screening,
+                urgency_tier=result.priority.urgency_tier,
+            )
+
+            all_doctors = get_staff_doctors()
+            assigned_doc, doc_selection_rationale = select_best_doctor(
+                doctors=all_doctors,
+                department_code=dept_code,
+                patient_language=result.patient_input.language,
+            )
+            assigned_doc_id = assigned_doc.get("id") if assigned_doc else None
+
+            save_consultation(result.request_id, {
+                "account_id": patient_context.get("account_id"),
+                "profile_id": patient_context.get("profile_id"),
+                "status": "triage",
+                "patient_language": result.patient_input.language,
+                "urgency_tier": result.priority.urgency_tier,
+                "department_id": dept_code,
+                "assigned_doctor_id": assigned_doc_id,
+                "original_transcript": result.patient_input.transcript_original,
+                "english_transcript": result.patient_input.transcript_english,
+                "complaint_category": complaint_cat,
+                "chief_complaint": result.clinical_summary.chief_complaint if result.clinical_summary else None,
+                "full_result": result.dict(),
+            })
+
+            if assigned_doc_id:
+                save_assignment(
+                    consultation_id=result.request_id,
+                    doctor_id=assigned_doc_id,
+                    assigned_by="system_routing",
+                    status="assigned",
+                    reassignment_reason=f"{routing_rationale} {doc_selection_rationale}",
+                    locked_by_name=assigned_doc.get("full_name"),
+                )
+        except Exception as route_err:
+            logger.warning("Routing failed for consultation %s: %s", result.request_id, route_err)
 
         # 4. Register for follow-up tracking
         try:
@@ -1122,3 +1175,252 @@ async def patient_voice_reply(
     except Exception as exc:
         logger.exception("Failed to process patient voice reply")
         raise HTTPException(status_code=500, detail="Failed to process voice reply.") from exc
+
+
+# -----------------------------------------------------------------------------
+# Block D: Doctor Queue, Routing & Roster Management (B5.1 - B5.8, F3.1 - F3.6)
+# -----------------------------------------------------------------------------
+
+class ClaimCaseRequest(BaseModel):
+    lock_ttl_minutes: Optional[int] = 15
+
+
+class ReassignCaseRequest(BaseModel):
+    target_doctor_id: str
+    target_department: Optional[str] = None
+    reason: str = Field(..., min_length=5, description="Mandatory clinical rationale for reassignment")
+
+
+class OverrideTierRequest(BaseModel):
+    new_tier: str
+    reason: str = Field(..., min_length=5, description="Mandatory clinical rationale for urgency tier override")
+
+
+class DoctorAvailabilityRequest(BaseModel):
+    is_on_duty: bool
+
+
+@app.get("/api/v1/doctor/queue")
+def get_doctor_queue(
+    tier: Optional[str] = None,
+    department: Optional[str] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.NURSE, UserRole.ADMIN])),
+):
+    """
+    Doctor Dashboard Consultation Queue (F3.1, F3.2).
+    Sorted urgent-first: emergency (0) > doctor_today (1) > doctor_soon (2) > self_care (3).
+    Includes atomic claim lock statuses, wait times, and complaint categorization.
+    """
+    from app.db import list_consultations_for_queue
+    results = list_consultations_for_queue(
+        department_code=department,
+        tier=tier,
+        status=status,
+        search=search,
+    )
+    return {
+        "count": len(results),
+        "consultations": results,
+    }
+
+
+@app.get("/api/v1/consultations/{consultation_id}")
+def get_consultation_details(
+    consultation_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Retrieve full consultation details and AI triage summary (F3.3, B4.7).
+    Patients can only view their own account's consultations.
+    """
+    from app.db import get_consultation, get_assignment_for_consultation
+    consultation = get_consultation(consultation_id)
+    if not consultation:
+        raise HTTPException(status_code=404, detail=f"Consultation '{consultation_id}' not found.")
+
+    if current_user.role == UserRole.PATIENT:
+        if consultation.get("account_id") and consultation.get("account_id") != current_user.account_id:
+            raise HTTPException(status_code=403, detail="Unauthorized: Access denied to other patient records.")
+
+    consultation["assignment"] = get_assignment_for_consultation(consultation_id)
+    return consultation
+
+
+@app.post("/api/v1/consultations/{consultation_id}/claim")
+def claim_consultation_case(
+    consultation_id: str,
+    req: ClaimCaseRequest = ClaimCaseRequest(),
+    current_doctor: AuthenticatedUser = Depends(require_verified_doctor),
+):
+    """
+    Atomic claim locking for clinician review (B5.4).
+    Prevents race conditions where two doctors attempt to answer the same consultation.
+    """
+    from app.db import claim_consultation_lock
+    success, message, assignment = claim_consultation_lock(
+        consultation_id=consultation_id,
+        doctor_id=current_doctor.user_id,
+        doctor_name=current_doctor.user_id,
+        lock_ttl_minutes=req.lock_ttl_minutes or 15,
+    )
+    if not success:
+        raise HTTPException(status_code=409, detail=message)
+    return {
+        "success": True,
+        "message": message,
+        "assignment": assignment,
+    }
+
+
+@app.post("/api/v1/consultations/{consultation_id}/release")
+def release_consultation_case(
+    consultation_id: str,
+    current_doctor: AuthenticatedUser = Depends(require_verified_doctor),
+):
+    """
+    Release claim lock on consultation back to the department pool (B5.4).
+    """
+    from app.db import release_consultation_lock
+    success, message = release_consultation_lock(
+        consultation_id=consultation_id,
+        doctor_id=current_doctor.user_id,
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    return {
+        "success": True,
+        "message": message,
+    }
+
+
+@app.post("/api/v1/consultations/{consultation_id}/reassign")
+def reassign_consultation_case(
+    consultation_id: str,
+    req: ReassignCaseRequest,
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.ADMIN])),
+):
+    """
+    Reassign case to another doctor or department with mandatory clinical reason (B5.6, B5.7).
+    """
+    from app.db import reassign_consultation
+    success, message, assignment = reassign_consultation(
+        consultation_id=consultation_id,
+        reassigning_doctor_id=current_user.user_id,
+        target_doctor_id=req.target_doctor_id,
+        target_department_code=req.target_department,
+        reason=req.reason,
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    return {
+        "success": True,
+        "message": message,
+        "assignment": assignment,
+    }
+
+
+@app.post("/api/v1/consultations/{consultation_id}/override-tier")
+def override_consultation_urgency_tier(
+    consultation_id: str,
+    req: OverrideTierRequest,
+    current_doctor: AuthenticatedUser = Depends(require_verified_doctor),
+):
+    """
+    Override AI triage urgency tier with mandatory clinical rationale (B5.6, B5.7).
+    Logged to append-only audit trail.
+    """
+    from app.db import override_urgency_tier
+    success, message, consultation = override_urgency_tier(
+        consultation_id=consultation_id,
+        doctor_id=current_doctor.user_id,
+        doctor_reg_no=current_doctor.doctor_registration_number,
+        new_tier=req.new_tier,
+        reason=req.reason,
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    return {
+        "success": True,
+        "message": message,
+        "consultation": consultation,
+    }
+
+
+@app.post("/api/v1/doctor/availability")
+def toggle_doctor_availability(
+    req: DoctorAvailabilityRequest,
+    current_doctor: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR])),
+):
+    """
+    Doctor availability toggle for duty scheduling (B5.1, F3.6).
+    """
+    from app.db import update_doctor_availability
+    success = update_doctor_availability(
+        doctor_id=current_doctor.user_id,
+        is_on_duty=req.is_on_duty,
+    )
+    return {
+        "success": success,
+        "is_on_duty": req.is_on_duty,
+        "message": f"Duty status updated to {'ON-DUTY' if req.is_on_duty else 'OFF-DUTY'}.",
+    }
+
+
+@app.get("/api/v1/doctor/roster")
+def get_doctor_roster(
+    department: Optional[str] = None,
+    on_duty_only: bool = False,
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.NURSE, UserRole.ADMIN])),
+):
+    """
+    Retrieve hospital doctor roster with specialty, schedule, capacity and duty status (B5.1, F4.2).
+    """
+    from app.db import get_staff_doctors
+    doctors = get_staff_doctors(department_code=department, on_duty_only=on_duty_only)
+    sanitized = []
+    for d in doctors:
+        doc_copy = dict(d)
+        doc_copy.pop("password_hash", None)
+        sanitized.append(doc_copy)
+    return {
+        "count": len(sanitized),
+        "doctors": sanitized,
+    }
+
+
+@app.post("/api/v1/staff/doctors/{doctor_id}/verify-registration")
+def verify_doctor_registration(
+    doctor_id: str,
+    current_admin: AuthenticatedUser = Depends(require_role([UserRole.ADMIN])),
+):
+    """
+    Hospital admin manually verifies doctor registration credentials (B5.2, F4.2).
+    Replaces regex-only matching with human administrative sign-off.
+    """
+    from app.db import verify_doctor_registration_by_admin
+    success = verify_doctor_registration_by_admin(
+        doctor_id=doctor_id,
+        admin_user_id=current_admin.user_id,
+    )
+    return {
+        "success": success,
+        "message": f"Doctor registration credentials verified by hospital administrator {current_admin.user_id}.",
+    }
+
+
+@app.post("/api/v1/consultations/escalate-unclaimed")
+def trigger_unclaimed_escalations(
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.ADMIN])),
+):
+    """
+    Trigger automatic escalation check for unclaimed cases exceeding timer limits (B5.5).
+    """
+    from app.db import get_unclaimed_consultations_for_escalation
+    escalations = get_unclaimed_consultations_for_escalation()
+    return {
+        "count": len(escalations),
+        "escalations": escalations,
+    }
+

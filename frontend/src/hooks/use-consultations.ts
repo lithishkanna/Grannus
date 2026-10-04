@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { getDoctorQueue } from '@/lib/api';
 
 export function useConsultations() {
   const [consultations, setConsultations] = useState<any[]>([]);
@@ -8,53 +8,56 @@ export function useConsultations() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterByPriority, setFilterByPriority] = useState<string>('All');
+  const [filterByDepartment, setFilterByDepartment] = useState<string>('All');
 
   const fetchConsultations = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      // Fetch consultations with pipeline results and summaries
-      const { data, error: fetchError } = await supabase
-        .from('pipeline_results')
-        .select(`
-          full_result,
-          consultation_id,
-          consultations (
-            created_at,
-            status
-          )
-        `)
-        .order('created_at', { ascending: false });
+      const res = await getDoctorQueue({
+        tier: filterByPriority !== 'All' ? filterByPriority : undefined,
+        department: filterByDepartment !== 'All' ? filterByDepartment : undefined,
+        search: searchQuery || undefined,
+      });
 
-      if (fetchError) throw fetchError;
-
-      let formatted = data.map((item: any) => ({
-        id: item.consultation_id,
-        created_at: item.consultations?.created_at,
-        status: item.consultations?.status,
-        result: item.full_result
+      const formatted = (res.consultations || []).map((item: any) => ({
+        id: item.id,
+        created_at: item.created_at,
+        status: item.status,
+        urgency_tier: item.urgency_tier,
+        department_id: item.department_id,
+        complaint_category: item.complaint_category,
+        chief_complaint: item.chief_complaint,
+        patient_language: item.patient_language,
+        assigned_doctor_id: item.assigned_doctor_id,
+        is_claimed: item.is_claimed,
+        claimed_by_name: item.claimed_by_name,
+        claimed_by_id: item.claimed_by_id,
+        lock_expires_at: item.lock_expires_at,
+        result: item.full_result || {
+          patient_input: {
+            language: item.patient_language,
+            transcript_original: item.original_transcript,
+            transcript_english: item.english_transcript,
+          },
+          clinical_summary: {
+            chief_complaint: item.chief_complaint,
+          },
+          priority: {
+            urgency_tier: item.urgency_tier,
+            level: item.urgency_tier === 'emergency' ? 'HIGH' : item.urgency_tier === 'doctor_today' ? 'HIGH' : item.urgency_tier === 'doctor_soon' ? 'MEDIUM' : 'LOW',
+          },
+        },
       }));
-
-      if (filterByPriority !== 'All') {
-        formatted = formatted.filter((item: any) => item.result.priority?.level === filterByPriority);
-      }
-
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        formatted = formatted.filter((item: any) => 
-          item.result.clinical_summary?.chief_complaint?.toLowerCase().includes(query) ||
-          item.result.patient_input?.language?.toLowerCase().includes(query)
-        );
-      }
 
       setConsultations(formatted);
     } catch (err: any) {
       console.error(err);
-      setError(err.message);
+      setError(err.message || 'Failed to load consultation queue.');
     } finally {
       setIsLoading(false);
     }
-  }, [filterByPriority, searchQuery]);
+  }, [filterByPriority, filterByDepartment, searchQuery]);
 
   useEffect(() => {
     fetchConsultations();
@@ -67,7 +70,9 @@ export function useConsultations() {
     refetch: fetchConsultations,
     filterByPriority,
     setFilterByPriority,
+    filterByDepartment,
+    setFilterByDepartment,
     searchQuery,
-    setSearchQuery
+    setSearchQuery,
   };
 }

@@ -721,5 +721,179 @@ export function setActiveProfile(profile: PatientProfile): void {
   localStorage.setItem('grannus_active_profile', JSON.stringify(profile));
 }
 
+// -----------------------------------------------------------------------------
+// Doctor Dashboard & Urgency Routing APIs (B5.1 - B5.8, F1.1, F3.1 - F3.6)
+// -----------------------------------------------------------------------------
+
+export interface DoctorQueueResponse {
+  count: number;
+  consultations: any[];
+}
+
+export async function getDoctorQueue(params?: {
+  tier?: string;
+  department?: string;
+  status?: string;
+  search?: string;
+}): Promise<DoctorQueueResponse> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const query = new URLSearchParams();
+  if (params?.tier && params.tier !== 'All') query.append('tier', params.tier);
+  if (params?.department) query.append('department', params.department);
+  if (params?.status) query.append('status', params.status);
+  if (params?.search) query.append('search', params.search);
+
+  const res = await fetch(`${baseUrl}/api/v1/doctor/queue?${query.toString()}`, {
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to load doctor consultation queue.');
+  }
+
+  return res.json();
+}
+
+export async function getConsultationDetails(consultationId: string): Promise<any> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}`, {
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch consultation ${consultationId}`);
+  }
+
+  return res.json();
+}
+
+export async function claimConsultationCase(consultationId: string, lockTtlMinutes = 15): Promise<any> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/claim`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ lock_ttl_minutes: lockTtlMinutes }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to claim consultation lock.');
+  }
+
+  return res.json();
+}
+
+export async function releaseConsultationCase(consultationId: string): Promise<any> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/release`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to release consultation lock.');
+  }
+
+  return res.json();
+}
+
+export async function reassignConsultationCase(
+  consultationId: string,
+  targetDoctorId: string,
+  reason: string,
+  targetDepartment?: string
+): Promise<any> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/reassign`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({
+      target_doctor_id: targetDoctorId,
+      reason,
+      target_department: targetDepartment,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to reassign consultation.');
+  }
+
+  return res.json();
+}
+
+export async function overrideUrgencyTier(
+  consultationId: string,
+  newTier: string,
+  reason: string
+): Promise<any> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/override-tier`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({
+      new_tier: newTier,
+      reason,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to override urgency tier.');
+  }
+
+  return res.json();
+}
+
+export async function toggleDoctorAvailability(isOnDuty: boolean): Promise<any> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/doctor/availability`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ is_on_duty: isOnDuty }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to update doctor availability.');
+  }
+
+  return res.json();
+}
+
+export async function getDoctorRoster(department?: string, onDutyOnly = false): Promise<any> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const query = new URLSearchParams();
+  if (department) query.append('department', department);
+  if (onDutyOnly) query.append('on_duty_only', 'true');
+
+  const res = await fetch(`${baseUrl}/api/v1/doctor/roster?${query.toString()}`, {
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to load doctor roster.');
+  }
+
+  return res.json();
+}
+
+
 
 

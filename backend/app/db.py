@@ -74,6 +74,8 @@ _MEM_STAFF: Dict[str, dict] = {}
 _MEM_JOBS: Dict[str, dict] = {}
 _MEM_THREADS: Dict[str, dict] = {}
 _MEM_FOLLOW_UPS: Dict[str, dict] = {}
+_MEM_CONSULTATIONS: Dict[str, dict] = {}
+_MEM_ASSIGNMENTS: Dict[str, dict] = {}
 _MEM_AUDIT_LOGS: List[dict] = []
 
 # Rate limiter for OTP requests: phone -> timestamp
@@ -392,19 +394,151 @@ def get_patient_profile(profile_id: str) -> Optional[dict]:
 # -----------------------------------------------------------------------------
 # Staff Authentication (B2.3 - Doctors, Nurses, Admins)
 # -----------------------------------------------------------------------------
-# Seed fallback staff credentials
+# Seed fallback staff credentials (8 demo doctors B5.1 + admin + nurse)
 _FALLBACK_STAFF = {
     "dr.rajan@hospital.in": {
-        "id": "doc_rajan_001",
+        "id": "11111111-0001-0000-0000-000000000001",
         "email": "dr.rajan@hospital.in",
         "password_hash": hash_password("grannus_secure_doctor_2026"),
         "role": "doctor",
-        "full_name": "Dr. Rajan K.",
-        "doctor_registration_number": "TNMC-54321",
+        "full_name": "Dr. Rajan K. (Demo doctor)",
+        "doctor_registration_number": "DEMO-NMC-GENMED-01",
         "state_council": "Tamil Nadu Medical Council",
         "specialty": "General Medicine",
+        "department_code": "GEN_MED",
+        "languages": ["ta", "en", "hi"],
+        "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 20,
+        "weekly_schedule": {"mon_fri": "09:00-17:00", "sat": "09:00-13:00"},
+        "is_verified_doctor": True,
+    },
+    "dr.priya@hospital.in": {
+        "id": "11111111-0002-0000-0000-000000000002",
+        "email": "dr.priya@hospital.in",
+        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "role": "doctor",
+        "full_name": "Dr. Priya Sundaram (Demo doctor)",
+        "doctor_registration_number": "DEMO-NMC-CARDIO-02",
+        "state_council": "Tamil Nadu Medical Council",
+        "specialty": "Cardiology",
+        "department_code": "CARDIOLOGY",
         "languages": ["ta", "en"],
         "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 10,
+        "weekly_schedule": {"mon_fri": "08:00-16:00"},
+        "is_verified_doctor": True,
+    },
+    "dr.vikram@hospital.in": {
+        "id": "11111111-0003-0000-0000-000000000003",
+        "email": "dr.vikram@hospital.in",
+        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "role": "doctor",
+        "full_name": "Dr. Vikram Patel (Demo doctor)",
+        "doctor_registration_number": "DEMO-NMC-PAED-03",
+        "state_council": "Gujarat Medical Council",
+        "specialty": "Pediatrics",
+        "department_code": "PEDIATRICS",
+        "languages": ["hi", "en", "te"],
+        "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 15,
+        "weekly_schedule": {"mon_sat": "10:00-18:00"},
+        "is_verified_doctor": True,
+    },
+    "dr.shalini@hospital.in": {
+        "id": "11111111-0004-0000-0000-000000000004",
+        "email": "dr.shalini@hospital.in",
+        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "role": "doctor",
+        "full_name": "Dr. Shalini Reddy (Demo doctor)",
+        "doctor_registration_number": "DEMO-NMC-DERM-04",
+        "state_council": "Andhra Pradesh Medical Council",
+        "specialty": "Dermatology",
+        "department_code": "GEN_MED",
+        "languages": ["te", "en"],
+        "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 15,
+        "weekly_schedule": {"tue_sat": "09:00-17:00"},
+        "is_verified_doctor": True,
+    },
+    "dr.meenakshi@hospital.in": {
+        "id": "11111111-0005-0000-0000-000000000005",
+        "email": "dr.meenakshi@hospital.in",
+        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "role": "doctor",
+        "full_name": "Dr. Meenakshi Iyer (Demo doctor)",
+        "doctor_registration_number": "DEMO-NMC-OBGYN-05",
+        "state_council": "Tamil Nadu Medical Council",
+        "specialty": "Obstetrics & Gynecology",
+        "department_code": "OBGYN",
+        "languages": ["ta", "en"],
+        "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 12,
+        "weekly_schedule": {"mon_fri": "09:00-17:00"},
+        "is_verified_doctor": True,
+    },
+    "dr.arvind@hospital.in": {
+        "id": "11111111-0006-0000-0000-000000000006",
+        "email": "dr.arvind@hospital.in",
+        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "role": "doctor",
+        "full_name": "Dr. Arvind Kumar (Demo doctor)",
+        "doctor_registration_number": "DEMO-NMC-ORTHO-06",
+        "state_council": "Delhi Medical Council",
+        "specialty": "Orthopaedics",
+        "department_code": "GEN_MED",
+        "languages": ["hi", "ta", "en"],
+        "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 15,
+        "weekly_schedule": {"mon_fri": "10:00-18:00"},
+        "is_verified_doctor": True,
+    },
+    "dr.suresh@hospital.in": {
+        "id": "11111111-0007-0000-0000-000000000007",
+        "email": "dr.suresh@hospital.in",
+        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "role": "doctor",
+        "full_name": "Dr. Suresh Varma (Demo doctor)",
+        "doctor_registration_number": "DEMO-NMC-ENT-07",
+        "state_council": "Telangana State Medical Council",
+        "specialty": "ENT",
+        "department_code": "GEN_MED",
+        "languages": ["te", "ta", "en"],
+        "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 15,
+        "weekly_schedule": {"mon_fri": "09:00-17:00"},
+        "is_verified_doctor": True,
+    },
+    "dr.harish@hospital.in": {
+        "id": "11111111-0008-0000-0000-000000000008",
+        "email": "dr.harish@hospital.in",
+        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "role": "doctor",
+        "full_name": "Dr. Harish Naidu (Demo doctor)",
+        "doctor_registration_number": "DEMO-NMC-DUTY-08",
+        "state_council": "Tamil Nadu Medical Council",
+        "specialty": "Emergency & Acute Care",
+        "department_code": "EMERGENCY",
+        "languages": ["ta", "hi", "te", "en"],
+        "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 25,
+        "weekly_schedule": {"all_week": "24_hours"},
+        "is_verified_doctor": True,
     },
     "dr_clinician": {
         "id": "doc_clinician_002",
@@ -412,11 +546,17 @@ _FALLBACK_STAFF = {
         "password_hash": hash_password("grannus_secure_doctor_2026"),
         "role": "doctor",
         "full_name": "Dr. Clinician",
-        "doctor_registration_number": "TNMC-54321",
+        "doctor_registration_number": "DEMO-NMC-GENMED-01",
         "state_council": "Tamil Nadu Medical Council",
         "specialty": "General Medicine",
+        "department_code": "GEN_MED",
         "languages": ["ta", "en"],
         "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 20,
+        "weekly_schedule": {"mon_fri": "09:00-17:00"},
+        "is_verified_doctor": True,
     },
     "admin@hospital.in": {
         "id": "admin_sys_001",
@@ -425,6 +565,7 @@ _FALLBACK_STAFF = {
         "role": "admin",
         "full_name": "System Administrator",
         "is_active": True,
+        "is_on_duty": True,
     },
     "nurse.mary@hospital.in": {
         "id": "nurse_mary_001",
@@ -433,6 +574,7 @@ _FALLBACK_STAFF = {
         "role": "nurse",
         "full_name": "Staff Nurse Mary",
         "is_active": True,
+        "is_on_duty": True,
     },
 }
 
@@ -770,4 +912,511 @@ def reset_recycled_phone_number(account_id: str) -> bool:
         details={"message": "All prior profiles cleared for recycled phone number."},
     )
     return True
+
+
+# -----------------------------------------------------------------------------
+# Consultations & Queue Management (B3.1, B5.1 - B5.8, F1.1)
+# -----------------------------------------------------------------------------
+TIER_PRIORITY_ORDER = {
+    "emergency": 0,
+    "doctor_today": 1,
+    "doctor_soon": 2,
+    "self_care": 3,
+}
+
+
+def save_consultation(consultation_id: str, data: dict) -> dict:
+    """Save consultation record with full triage results and department mapping (B3.1, B5.3)."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    record = {
+        "id": consultation_id,
+        "hospital_id": data.get("hospital_id", "c5b971d1-fe39-40bf-a5cb-539f1a98059f"),
+        "account_id": data.get("account_id"),
+        "profile_id": data.get("profile_id"),
+        "patient_id": data.get("patient_id"),
+        "status": data.get("status", "triage"),
+        "patient_language": data.get("patient_language", "en-IN"),
+        "urgency_tier": data.get("urgency_tier", "doctor_soon"),
+        "department_id": data.get("department_id"),
+        "assigned_doctor_id": data.get("assigned_doctor_id"),
+        "original_transcript": data.get("original_transcript", ""),
+        "english_transcript": data.get("english_transcript", ""),
+        "audio_url": data.get("audio_url", ""),
+        "complaint_category": data.get("complaint_category"),
+        "chief_complaint": data.get("chief_complaint"),
+        "full_result": data.get("full_result"),
+        "created_at": data.get("created_at", now_iso),
+        "updated_at": now_iso,
+    }
+
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("consultations").upsert(record).execute()
+        except Exception as exc:
+            logger.error("Supabase save_consultation error: %s", exc)
+
+    _MEM_CONSULTATIONS[consultation_id] = record
+    return record
+
+
+def get_consultation(consultation_id: str) -> Optional[dict]:
+    """Retrieve consultation record by ID."""
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("consultations").select("*").eq("id", consultation_id).execute()
+            if res.data:
+                return res.data[0]
+        except Exception as exc:
+            logger.error("Supabase get_consultation error: %s", exc)
+    return _MEM_CONSULTATIONS.get(consultation_id)
+
+
+def list_consultations_for_queue(
+    department_code: Optional[str] = None,
+    tier: Optional[str] = None,
+    doctor_id: Optional[str] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+) -> List[dict]:
+    """
+    List consultations for doctor dashboard queue, sorted urgent-first (F3.2).
+    Emergency (0) -> Doctor Today (1) -> Doctor Soon (2) -> Self Care (3).
+    """
+    results: List[dict] = []
+    client = get_supabase_client()
+    if client:
+        try:
+            query = client.table("consultations").select("*")
+            if status:
+                query = query.eq("status", status)
+            if tier and tier.lower() != "all":
+                query = query.eq("urgency_tier", tier)
+            if doctor_id:
+                query = query.eq("assigned_doctor_id", doctor_id)
+            res = query.order("created_at", ascending=False).execute()
+            if res.data:
+                results = res.data
+        except Exception as exc:
+            logger.error("Supabase list_queue error: %s", exc)
+
+    if not results:
+        results = list(_MEM_CONSULTATIONS.values())
+        if status:
+            results = [c for c in results if c.get("status") == status]
+        if tier and tier.lower() != "all":
+            results = [c for c in results if c.get("urgency_tier") == tier]
+        if doctor_id:
+            results = [c for c in results if c.get("assigned_doctor_id") == doctor_id]
+
+    if search:
+        q = search.lower()
+        results = [
+            c for c in results
+            if q in (c.get("chief_complaint") or "").lower()
+            or q in (c.get("patient_language") or "").lower()
+            or q in (c.get("original_transcript") or "").lower()
+            or q in (c.get("english_transcript") or "").lower()
+        ]
+
+    # Attach current assignment lock status for each case
+    for c in results:
+        cid = c["id"]
+        assignment = get_assignment_for_consultation(cid)
+        if assignment:
+            c["assignment"] = assignment
+            c["is_claimed"] = assignment.get("status") == "claimed"
+            c["claimed_by_id"] = assignment.get("doctor_id")
+            c["claimed_by_name"] = assignment.get("locked_by_name")
+            c["lock_expires_at"] = assignment.get("lock_expires_at")
+        else:
+            c["assignment"] = None
+            c["is_claimed"] = False
+            c["claimed_by_id"] = None
+            c["claimed_by_name"] = None
+            c["lock_expires_at"] = None
+
+    # Sort urgent-first: emergency (0) > doctor_today (1) > doctor_soon (2) > self_care (3)
+    results.sort(
+        key=lambda c: (
+            TIER_PRIORITY_ORDER.get(c.get("urgency_tier", "self_care"), 4),
+            c.get("created_at", "")
+        )
+    )
+    return results
+
+
+def save_assignment(
+    consultation_id: str,
+    doctor_id: str,
+    assigned_by: str = "system",
+    status: str = "assigned",
+    reassignment_reason: Optional[str] = None,
+    locked_by_name: Optional[str] = None,
+    lock_ttl_minutes: int = 15,
+) -> dict:
+    """Save or update consultation doctor assignment (B5.3, B5.4)."""
+    now = datetime.now(timezone.utc)
+    lock_expires = (now + timedelta(minutes=lock_ttl_minutes)).isoformat() if status == "claimed" else None
+    assignment_id = f"asgn_{consultation_id[:8]}_{int(time.time())}"
+    rec = {
+        "id": assignment_id,
+        "consultation_id": consultation_id,
+        "doctor_id": doctor_id,
+        "assigned_by": assigned_by,
+        "status": status,
+        "reassignment_reason": reassignment_reason,
+        "claimed_at": now.isoformat() if status == "claimed" else None,
+        "released_at": None,
+        "lock_expires_at": lock_expires,
+        "locked_by_name": locked_by_name,
+    }
+
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("consultation_assignments").insert(rec).execute()
+        except Exception as exc:
+            logger.error("Supabase save_assignment error: %s", exc)
+
+    _MEM_ASSIGNMENTS[consultation_id] = rec
+    return rec
+
+
+def get_assignment_for_consultation(consultation_id: str) -> Optional[dict]:
+    """Get active assignment for consultation."""
+    client = get_supabase_client()
+    if client:
+        try:
+            res = (
+                client.table("consultation_assignments")
+                .select("*")
+                .eq("consultation_id", consultation_id)
+                .order("claimed_at", ascending=False)
+                .limit(1)
+                .execute()
+            )
+            if res.data:
+                return res.data[0]
+        except Exception as exc:
+            logger.error("Supabase get_assignment error: %s", exc)
+    return _MEM_ASSIGNMENTS.get(consultation_id)
+
+
+def claim_consultation_lock(
+    consultation_id: str,
+    doctor_id: str,
+    doctor_name: str,
+    lock_ttl_minutes: int = 15,
+) -> Tuple[bool, str, Optional[dict]]:
+    """
+    Atomic claim locking (B5.4) so two doctors cannot claim the same case.
+    Prevents race condition and enforces active lock timeouts.
+    """
+    now = datetime.now(timezone.utc)
+    assignment = get_assignment_for_consultation(consultation_id)
+
+    if assignment and assignment.get("status") == "claimed":
+        current_claimant = assignment.get("doctor_id")
+        lock_expires_at_str = assignment.get("lock_expires_at")
+        is_lock_active = True
+        if lock_expires_at_str:
+            try:
+                exp_dt = datetime.fromisoformat(lock_expires_at_str)
+                if exp_dt < now:
+                    is_lock_active = False
+            except Exception:
+                pass
+
+        if is_lock_active and current_claimant != doctor_id:
+            claimant_name = assignment.get("locked_by_name", "another clinician")
+            return False, f"Case already locked and claimed by {claimant_name}. Lock expires at {lock_expires_at_str}.", assignment
+
+    # Lock acquired or refreshed
+    new_assignment = save_assignment(
+        consultation_id=consultation_id,
+        doctor_id=doctor_id,
+        assigned_by=doctor_name,
+        status="claimed",
+        locked_by_name=doctor_name,
+        lock_ttl_minutes=lock_ttl_minutes,
+    )
+
+    # Update consultation status
+    consultation = get_consultation(consultation_id)
+    if consultation:
+        consultation["assigned_doctor_id"] = doctor_id
+        consultation["status"] = "in_review"
+        save_consultation(consultation_id, consultation)
+
+    append_audit_log_entry(
+        action="CONSULTATION_CLAIMED",
+        user_id=doctor_id,
+        role="doctor",
+        resource_id=consultation_id,
+        details={"locked_by_name": doctor_name, "lock_ttl_minutes": lock_ttl_minutes},
+    )
+    return True, "Consultation case successfully claimed and locked.", new_assignment
+
+
+def release_consultation_lock(
+    consultation_id: str,
+    doctor_id: str,
+) -> Tuple[bool, str]:
+    """Release claim lock on consultation so other clinicians can claim (B5.4)."""
+    assignment = get_assignment_for_consultation(consultation_id)
+    if not assignment or assignment.get("doctor_id") != doctor_id:
+        return False, "You do not currently hold the claim lock for this consultation."
+
+    assignment["status"] = "released"
+    assignment["released_at"] = datetime.now(timezone.utc).isoformat()
+    assignment["lock_expires_at"] = None
+
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("consultation_assignments").update({
+                "status": "released",
+                "released_at": assignment["released_at"],
+                "lock_expires_at": None,
+            }).eq("id", assignment["id"]).execute()
+        except Exception:
+            pass
+
+    _MEM_ASSIGNMENTS[consultation_id] = assignment
+
+    consultation = get_consultation(consultation_id)
+    if consultation:
+        consultation["status"] = "triage"
+        consultation["assigned_doctor_id"] = None
+        save_consultation(consultation_id, consultation)
+
+    append_audit_log_entry(
+        action="CONSULTATION_RELEASED",
+        user_id=doctor_id,
+        role="doctor",
+        resource_id=consultation_id,
+        details={"consultation_id": consultation_id},
+    )
+    return True, "Claim lock released. Case returned to active department queue."
+
+
+def reassign_consultation(
+    consultation_id: str,
+    reassigning_doctor_id: str,
+    target_doctor_id: str,
+    target_department_code: Optional[str],
+    reason: str,
+) -> Tuple[bool, str, Optional[dict]]:
+    """Reassign case with mandatory clinical reason logged to audit trail (B5.6, B5.7)."""
+    if not reason or len(reason.strip()) < 5:
+        return False, "A mandatory clinical rationale of at least 5 characters is required for reassignment.", None
+
+    target_doctor = find_staff_user(target_doctor_id)
+    target_name = target_doctor.get("full_name", target_doctor_id) if target_doctor else target_doctor_id
+
+    new_assignment = save_assignment(
+        consultation_id=consultation_id,
+        doctor_id=target_doctor_id,
+        assigned_by=reassigning_doctor_id,
+        status="assigned",
+        reassignment_reason=reason.strip(),
+        locked_by_name=target_name,
+    )
+
+    consultation = get_consultation(consultation_id)
+    if consultation:
+        consultation["assigned_doctor_id"] = target_doctor_id
+        if target_department_code:
+            consultation["department_id"] = target_department_code
+        save_consultation(consultation_id, consultation)
+
+    append_audit_log_entry(
+        action="CONSULTATION_REASSIGNED",
+        user_id=reassigning_doctor_id,
+        role="doctor",
+        resource_id=consultation_id,
+        details={
+            "target_doctor_id": target_doctor_id,
+            "target_doctor_name": target_name,
+            "target_department": target_department_code,
+            "reason": reason.strip(),
+        },
+    )
+    return True, f"Case successfully reassigned to {target_name}.", new_assignment
+
+
+def override_urgency_tier(
+    consultation_id: str,
+    doctor_id: str,
+    doctor_reg_no: Optional[str],
+    new_tier: str,
+    reason: str,
+) -> Tuple[bool, str, Optional[dict]]:
+    """Override AI urgency tier with mandatory clinical reason (B5.6, B5.7)."""
+    valid_tiers = ["emergency", "doctor_today", "doctor_soon", "self_care"]
+    if new_tier not in valid_tiers:
+        return False, f"Invalid urgency tier '{new_tier}'. Must be one of {valid_tiers}.", None
+
+    if not reason or len(reason.strip()) < 5:
+        return False, "A mandatory clinical rationale of at least 5 characters is required to override urgency tier.", None
+
+    consultation = get_consultation(consultation_id)
+    if not consultation:
+        return False, f"Consultation '{consultation_id}' not found.", None
+
+    old_tier = consultation.get("urgency_tier", "unknown")
+    consultation["urgency_tier"] = new_tier
+    save_consultation(consultation_id, consultation)
+
+    # Sync follow-up record if exists
+    follow_up = get_follow_up_record(consultation_id)
+    if follow_up:
+        follow_up["urgency_tier"] = new_tier
+        save_follow_up_record(consultation_id, follow_up)
+
+    append_audit_log_entry(
+        action="URGENCY_TIER_OVERRIDDEN",
+        user_id=doctor_id,
+        role="doctor",
+        resource_id=consultation_id,
+        details={
+            "old_tier": old_tier,
+            "new_tier": new_tier,
+            "doctor_reg_no": doctor_reg_no,
+            "clinical_reason": reason.strip(),
+        },
+    )
+    return True, f"Urgency tier overridden from '{old_tier}' to '{new_tier}'.", consultation
+
+
+def update_doctor_availability(doctor_id: str, is_on_duty: bool) -> bool:
+    """Doctor availability toggle (B5.1, F3.6)."""
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("staff_users").update({"is_on_duty": is_on_duty}).eq("id", doctor_id).execute()
+        except Exception as exc:
+            logger.error("Supabase update_duty error: %s", exc)
+
+    # Update fallback in-memory doctor if matching
+    for d in _FALLBACK_STAFF.values():
+        if d.get("id") == doctor_id or d.get("email") == doctor_id:
+            d["is_on_duty"] = is_on_duty
+
+    append_audit_log_entry(
+        action="DOCTOR_AVAILABILITY_CHANGED",
+        user_id=doctor_id,
+        role="doctor",
+        resource_id=doctor_id,
+        details={"is_on_duty": is_on_duty},
+    )
+    return True
+
+
+def verify_doctor_registration_by_admin(doctor_id: str, admin_user_id: str) -> bool:
+    """Administrative verification of doctor registration number (B5.2, F4.2)."""
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("staff_users").update({"is_verified_doctor": True}).eq("id", doctor_id).execute()
+        except Exception as exc:
+            logger.error("Supabase admin_verify_doc error: %s", exc)
+
+    for d in _FALLBACK_STAFF.values():
+        if d.get("id") == doctor_id or d.get("email") == doctor_id:
+            d["is_verified_doctor"] = True
+
+    append_audit_log_entry(
+        action="DOCTOR_REGISTRATION_ADMIN_VERIFIED",
+        user_id=admin_user_id,
+        role="admin",
+        resource_id=doctor_id,
+        details={"verified_doctor_id": doctor_id},
+    )
+    return True
+
+
+def get_staff_doctors(department_code: Optional[str] = None, on_duty_only: bool = False) -> List[dict]:
+    """Retrieve doctor roster with specialty, schedule, capacity and status (B5.1, F4.2)."""
+    docs: List[dict] = []
+    client = get_supabase_client()
+    if client:
+        try:
+            q = client.table("staff_users").select("*").eq("role", "doctor")
+            if on_duty_only:
+                q = q.eq("is_on_duty", True)
+            res = q.execute()
+            if res.data:
+                docs = res.data
+        except Exception as exc:
+            logger.error("Supabase get_staff_doctors error: %s", exc)
+
+    if not docs:
+        docs = [s for s in _FALLBACK_STAFF.values() if s.get("role") == "doctor"]
+        if on_duty_only:
+            docs = [s for s in docs if s.get("is_on_duty", True)]
+
+    if department_code:
+        docs = [d for d in docs if d.get("department_code") == department_code or d.get("specialty", "").upper() == department_code]
+
+    return docs
+
+
+def get_unclaimed_consultations_for_escalation() -> List[dict]:
+    """
+    Check unclaimed-case timers per tier and trigger automatic escalation (B5.5).
+      - Emergency > 5 min -> raise critical ER alert flag
+      - Doctor Today > 2 hours -> escalate to duty doctor
+      - Doctor Soon > 24 hours -> escalate to Doctor Today
+    """
+    now = datetime.now(timezone.utc)
+    escalations = []
+    consultations = list_consultations_for_queue(status="triage")
+
+    for c in consultations:
+        if c.get("is_claimed"):
+            continue
+
+        created_str = c.get("created_at")
+        if not created_str:
+            continue
+
+        try:
+            created_dt = datetime.fromisoformat(created_str)
+            elapsed_seconds = (now - created_dt).total_seconds()
+            tier = c.get("urgency_tier", "self_care")
+            cid = c["id"]
+
+            if tier == "emergency" and elapsed_seconds > 300: # > 5 min
+                escalations.append({
+                    "consultation_id": cid,
+                    "tier": tier,
+                    "action": "ER_ALERT_ESCALATION",
+                    "reason": f"Emergency case unclaimed for {int(elapsed_seconds/60)} minutes. Hospital ER and duty doctor alerted.",
+                })
+            elif tier == "doctor_today" and elapsed_seconds > 7200: # > 2 hours
+                c["assigned_doctor_id"] = "11111111-0008-0000-0000-000000000008" # Duty Doctor
+                save_consultation(cid, c)
+                escalations.append({
+                    "consultation_id": cid,
+                    "tier": tier,
+                    "action": "DUTY_DOCTOR_DISPATCH",
+                    "reason": f"Doctor Today case unclaimed for {int(elapsed_seconds/3600)} hours. Automatically routed to Duty Doctor.",
+                })
+            elif tier == "doctor_soon" and elapsed_seconds > 86400: # > 24 hours
+                c["urgency_tier"] = "doctor_today"
+                save_consultation(cid, c)
+                escalations.append({
+                    "consultation_id": cid,
+                    "tier": "doctor_today",
+                    "action": "TIER_ESCALATED",
+                    "reason": "Doctor Soon case unclaimed for > 24 hours. Escalated to Doctor Today tier.",
+                })
+        except Exception:
+            continue
+
+    return escalations
+
 

@@ -106,8 +106,8 @@ class AuthenticatedUser(BaseModel):
     hospital_id: Optional[str] = None
 
 
-# NMC / State Medical Council registration format (e.g. "MCI-41982", "TN-67890", "123456")
-DOCTOR_REG_REGEX = re.compile(r"^[A-Z]{2,4}-?[0-9]{4,10}$|^[0-9]{5,10}$", re.IGNORECASE)
+# NMC / State Medical Council registration format (e.g. "MCI-41982", "TN-67890", "123456", "DEMO-NMC-GENMED-01")
+DOCTOR_REG_REGEX = re.compile(r"^DEMO-[A-Z0-9-]+$|^[A-Z]{2,4}-?[0-9]{4,10}$|^[0-9]{5,10}$", re.IGNORECASE)
 
 
 def validate_doctor_registration(reg_number: str) -> bool:
@@ -140,6 +140,7 @@ def create_token(
     account_id: Optional[str] = None,
     profile_id: Optional[str] = None,
     hospital_id: Optional[str] = None,
+    is_verified_doctor: Optional[bool] = None,
     expires_in_seconds: int = 86400,
 ) -> str:
     """
@@ -148,7 +149,9 @@ def create_token(
     secret = get_signing_secret()
     
     is_verified = False
-    if role == UserRole.DOCTOR and doctor_reg_no:
+    if is_verified_doctor is not None:
+        is_verified = is_verified_doctor
+    elif role == UserRole.DOCTOR and doctor_reg_no:
         is_verified = validate_doctor_registration(doctor_reg_no)
 
     payload = {
