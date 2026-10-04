@@ -133,7 +133,7 @@ def get_cached_demo_response(sample_id: str, language_code: str = "en-IN") -> Op
     if not meta:
         return None
 
-    req_id = f"demo_{sample_id}_{int(time.time())}"
+    req_id = str(uuid.uuid4())
     transcript = meta["transcript_original"]
     expected_tier = meta["expected_tier"]
 

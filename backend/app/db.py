@@ -1006,20 +1006,23 @@ def list_consultations_for_queue(
                 query = query.eq("urgency_tier", tier)
             if doctor_id:
                 query = query.eq("assigned_doctor_id", doctor_id)
-            res = query.order("created_at", ascending=False).execute()
+            res = query.order("created_at", desc=True).execute()
             if res.data:
                 results = res.data
         except Exception as exc:
             logger.error("Supabase list_queue error: %s", exc)
 
-    if not results:
-        results = list(_MEM_CONSULTATIONS.values())
-        if status:
-            results = [c for c in results if c.get("status") == status]
-        if tier and tier.lower() != "all":
-            results = [c for c in results if c.get("urgency_tier") == tier]
-        if doctor_id:
-            results = [c for c in results if c.get("assigned_doctor_id") == doctor_id]
+    seen_ids = {c["id"] for c in results}
+    for mem_c in _MEM_CONSULTATIONS.values():
+        if mem_c.get("id") not in seen_ids:
+            if status and mem_c.get("status") != status:
+                continue
+            if tier and tier.lower() != "all" and mem_c.get("urgency_tier") != tier:
+                continue
+            if doctor_id and mem_c.get("assigned_doctor_id") != doctor_id:
+                continue
+            results.append(mem_c)
+            seen_ids.add(mem_c.get("id"))
 
     if search:
         q = search.lower()
@@ -1104,7 +1107,7 @@ def get_assignment_for_consultation(consultation_id: str) -> Optional[dict]:
                 client.table("consultation_assignments")
                 .select("*")
                 .eq("consultation_id", consultation_id)
-                .order("claimed_at", ascending=False)
+                .order("claimed_at", desc=True)
                 .limit(1)
                 .execute()
             )
