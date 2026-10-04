@@ -523,4 +523,199 @@ export async function replyToVoiceThread(params: {
   return response.json();
 }
 
+// -----------------------------------------------------------------------------
+// Authentication & Patient Profiles Client (Block B & Block C)
+// -----------------------------------------------------------------------------
+
+export interface AuthUser {
+  user_id: string
+  role: 'patient' | 'doctor' | 'nurse' | 'admin' | 'asha_worker'
+  is_verified_doctor?: boolean
+  doctor_registration_number?: string | null
+  phone_number?: string | null
+  account_id?: string | null
+  full_name?: string | null
+  hospital_id?: string | null
+}
+
+export interface LoginResponse {
+  token: string
+  user_id: string
+  role: 'patient' | 'doctor' | 'nurse' | 'admin' | 'asha_worker'
+  is_verified_doctor: boolean
+  doctor_registration_number?: string | null
+  phone_number?: string | null
+  account_id?: string | null
+  full_name?: string | null
+  hospital_id?: string | null
+}
+
+export interface PatientProfile {
+  id: string
+  account_id: string
+  full_name: string
+  age?: string | null
+  gender?: string | null
+  relation: string
+  preferred_language: string
+  allergies?: string[]
+  medications?: string[]
+  known_conditions?: string[]
+  pin_hash?: string | null
+  created_at?: string
+}
+
+export interface PatientProfileCreate {
+  full_name: string
+  age?: string
+  gender?: string
+  relation?: string
+  preferred_language?: string
+  allergies?: string[]
+  medications?: string[]
+  known_conditions?: string[]
+  pin?: string
+}
+
+/**
+ * Request 6-digit OTP for patient phone login.
+ */
+export async function requestPhoneOtp(phoneNumber: string): Promise<{
+  success: boolean
+  message: string
+  dev_otp_hint?: string
+}> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/auth/otp/request`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone_number: phoneNumber }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Could not send verification code.');
+  }
+
+  return res.json();
+}
+
+/**
+ * Verify phone OTP and establish authenticated patient session.
+ */
+export async function verifyPhoneOtp(phoneNumber: string, otpCode: string): Promise<LoginResponse> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/auth/otp/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone_number: phoneNumber, otp_code: otpCode }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Invalid verification code.');
+  }
+
+  const data: LoginResponse = await res.json();
+  setAuthToken(data.token);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('grannus_user', JSON.stringify(data));
+  }
+  return data;
+}
+
+/**
+ * Staff login with email and password (doctors, nurses, admins).
+ */
+export async function loginStaff(payload: Record<string, any>): Promise<LoginResponse> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Invalid email or password.');
+  }
+
+  const data: LoginResponse = await res.json();
+  setAuthToken(data.token);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('grannus_user', JSON.stringify(data));
+  }
+  return data;
+}
+
+/**
+ * Log out and revoke active session.
+ */
+export async function logoutUser(): Promise<void> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  try {
+    await fetch(`${baseUrl}/api/v1/auth/logout`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+  } catch {
+    // Graceful offline logout
+  }
+  removeAuthToken();
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('grannus_user');
+    localStorage.removeItem('grannus_active_profile');
+  }
+}
+
+/**
+ * Fetch patient profiles linked to authenticated phone account.
+ */
+export async function getPatientProfiles(): Promise<PatientProfile[]> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/patient/profiles`, {
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to load patient profiles.');
+  }
+
+  return res.json();
+}
+
+/**
+ * Create a new patient profile under authenticated phone account.
+ */
+export async function createPatientProfile(profile: PatientProfileCreate): Promise<PatientProfile> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/patient/profiles`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(profile),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to create patient profile.');
+  }
+
+  return res.json();
+}
+
+export function getActiveProfile(): PatientProfile | null {
+  if (typeof window === 'undefined') return null;
+  const raw = localStorage.getItem('grannus_active_profile');
+  return raw ? JSON.parse(raw) : null;
+}
+
+export function setActiveProfile(profile: PatientProfile): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('grannus_active_profile', JSON.stringify(profile));
+}
+
+
 

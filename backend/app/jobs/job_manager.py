@@ -59,6 +59,17 @@ class JobRecord:
         self.progress_pct = progress_pct
         self.current_stage = stage_desc
         self.updated_at = time.time()
+        try:
+            from app.db import save_pipeline_job
+            save_pipeline_job(self.job_id, {
+                "status": status.value,
+                "stage": stage_desc,
+                "progress": progress_pct,
+                "result": self.result.dict() if self.result else None,
+                "error_message": self.error,
+            })
+        except Exception:
+            pass
 
     def to_response(self) -> JobProgressResponse:
         return JobProgressResponse(
@@ -79,11 +90,35 @@ class JobManager:
 
     def create_job(self) -> str:
         job_id = f"job_{uuid.uuid4().hex[:12]}"
-        self._jobs[job_id] = JobRecord(job_id)
+        rec = JobRecord(job_id)
+        self._jobs[job_id] = rec
+        try:
+            from app.db import save_pipeline_job
+            save_pipeline_job(job_id, {
+                "status": rec.status.value,
+                "stage": rec.current_stage,
+                "progress": rec.progress_pct,
+            })
+        except Exception:
+            pass
         return job_id
 
     def get_job(self, job_id: str) -> Optional[JobRecord]:
-        return self._jobs.get(job_id)
+        if job_id in self._jobs:
+            return self._jobs[job_id]
+        try:
+            from app.db import get_pipeline_job
+            data = get_pipeline_job(job_id)
+            if data:
+                rec = JobRecord(job_id)
+                rec.status = JobStatus(data.get("status", "QUEUED"))
+                rec.progress_pct = data.get("progress", 0)
+                rec.current_stage = data.get("stage", "")
+                self._jobs[job_id] = rec
+                return rec
+        except Exception:
+            pass
+        return None
 
     async def execute_job(
         self,

@@ -31,6 +31,21 @@ class VoiceThreadManager:
     ) -> VoiceThread:
         """Fetch existing conversation thread or initialize new thread for consultation."""
         if consultation_id not in self._threads:
+            try:
+                from app.db import get_voice_thread
+                db_data = get_voice_thread(consultation_id)
+                if db_data and "messages" in db_data:
+                    self._threads[consultation_id] = VoiceThread(
+                        thread_id=db_data.get("id", f"thread_{consultation_id[:8]}"),
+                        consultation_id=consultation_id,
+                        patient_language=db_data.get("patient_language", patient_language),
+                        doctor_language=db_data.get("doctor_language", doctor_language),
+                        messages=[VoiceThreadMessage(**m) for m in db_data.get("messages", [])],
+                    )
+                    return self._threads[consultation_id]
+            except Exception:
+                pass
+
             thread_id = f"thread_{consultation_id[:8]}_{int(time.time())}"
             self._threads[consultation_id] = VoiceThread(
                 thread_id=thread_id,
@@ -74,6 +89,13 @@ class VoiceThreadManager:
             created_at=created_at,
         )
         thread.messages.append(msg)
+
+        try:
+            from app.db import save_voice_thread
+            save_voice_thread(consultation_id, thread.dict())
+        except Exception:
+            pass
+
         logger.info(
             "Appended voice thread message consultation_id=%s sender=%s msg_id=%s",
             consultation_id, sender, message_id
@@ -81,7 +103,9 @@ class VoiceThreadManager:
         return msg
 
     def get_thread(self, consultation_id: str) -> Optional[VoiceThread]:
-        return self._threads.get(consultation_id)
+        if consultation_id in self._threads:
+            return self._threads[consultation_id]
+        return self.get_or_create_thread(consultation_id)
 
 
 _thread_manager: Optional[VoiceThreadManager] = None

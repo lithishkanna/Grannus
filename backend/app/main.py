@@ -16,7 +16,8 @@ load_dotenv()  # populate os.environ from .env before Settings() reads it
 from contextlib import asynccontextmanager
 import time
 import uuid
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Depends, status
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Depends, status, Security
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -53,6 +54,8 @@ from app.auth import (
     require_verified_doctor,
     generate_signed_url,
     verify_signed_url,
+    revoke_token,
+    security_bearer,
 )
 from app.security.input_validation import validate_audio_upload, sanitize_filename
 from app.security.rate_limiter import rate_limit_patient_intake
@@ -167,9 +170,25 @@ def prometheus_metrics():
 
 # --- Security & Auth Endpoints ---
 
+class OTPRequest(BaseModel):
+    phone_number: str
+
+
+class OTPRequestResponse(BaseModel):
+    success: bool
+    message: str
+    dev_otp_hint: Optional[str] = None
+
+
+class OTPVerifyRequest(BaseModel):
+    phone_number: str
+    otp_code: str
+
+
 class LoginRequest(BaseModel):
-    user_id: str
-    role: UserRole
+    user_id: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[UserRole] = None
     password: Optional[str] = None
     doctor_registration_number: Optional[str] = None
     state_medical_council: Optional[str] = None
@@ -179,8 +198,24 @@ class LoginResponse(BaseModel):
     token: str
     user_id: str
     role: UserRole
-    is_verified_doctor: bool
+    is_verified_doctor: bool = False
     doctor_registration_number: Optional[str] = None
+    phone_number: Optional[str] = None
+    account_id: Optional[str] = None
+    full_name: Optional[str] = None
+    hospital_id: Optional[str] = None
+
+
+class PatientProfileCreate(BaseModel):
+    full_name: str
+    age: Optional[str] = None
+    gender: Optional[str] = None
+    relation: Optional[str] = "self"
+    preferred_language: Optional[str] = "ta-IN"
+    allergies: Optional[List[str]] = None
+    medications: Optional[List[str]] = None
+    known_conditions: Optional[List[str]] = None
+    pin: Optional[str] = None
 
 
 class ConsentRequest(BaseModel):
@@ -194,38 +229,141 @@ class ErasureRequest(BaseModel):
     reason: Optional[str] = "Statutory erasure requested under DPDP Act 2023"
 
 
+@app.post("/api/v1/auth/otp/request", response_model=OTPRequestResponse)
+def request_phone_otp_endpoint(req: OTPRequest):
+    """
+    Request 6-digit phone OTP for patient authentication (B2.2).
+    Enforces 60-second cooldown and 5-minute single-use expiration.
+    """
+    from app.db import request_phone_otp
+    success, message, dev_hint = request_phone_otp(req.phone_number)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=message,
+        )
+    return OTPRequestResponse(
+        success=True,
+        message=message,
+        dev_otp_hint=dev_hint,
+    )
+
+
+@app.post("/api/v1/auth/otp/verify", response_model=LoginResponse)
+def verify_phone_otp_endpoint(req: OTPVerifyRequest):
+    """
+    Verify phone OTP for patient session creation (B2.2).
+    Single-use, max 5 attempts.
+    """
+    from app.db import verify_phone_otp
+    success, message, account = verify_phone_otp(req.phone_number, req.otp_code)
+    if not success or not account:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=message,
+        )
+
+    account_id = account["id"]
+    phone_number = account["phone_number"]
+    user_id = f"pat_{account_id[:8]}"
+
+    token = create_token(
+        user_id=user_id,
+        role=UserRole.PATIENT,
+        phone_number=phone_number,
+        account_id=account_id,
+    )
+
+    get_audit_logger().log(
+        action="AUTH_PATIENT_OTP_VERIFIED",
+        user_id=user_id,
+        role=UserRole.PATIENT.value,
+        details={"account_id": account_id},
+    )
+
+    return LoginResponse(
+        token=token,
+        user_id=user_id,
+        role=UserRole.PATIENT,
+        is_verified_doctor=False,
+        phone_number=phone_number,
+        account_id=account_id,
+    )
+
+
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
 async def login(req: LoginRequest):
     """
-    Authenticate a patient, doctor, or administrator.
-    Verifies passwords and Indian medical registration credentials for doctors.
+    Authenticate staff (doctors, nurses, admins) with email and password,
+    or verify credentials with medical registration number validation (B2.3).
     """
-    from app.auth import validate_doctor_registration, authenticate_credentials
-    if not authenticate_credentials(req.user_id, req.role, req.password):
+    from app.auth import validate_doctor_registration, authenticate_credentials, verify_token
+    from app.db import authenticate_staff_user, find_staff_user
+
+    identifier = (req.email or req.user_id or "").strip()
+    if not identifier:
         raise HTTPException(
-            status_code=401,
-            detail="Invalid credentials. Please verify your user ID and password.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email or User ID is required.",
         )
 
-    if req.role == UserRole.DOCTOR:
-        if not req.doctor_registration_number:
+    staff_record = find_staff_user(identifier)
+    if staff_record:
+        if not req.password:
             raise HTTPException(
-                status_code=400,
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Password is required for staff account authentication.",
+            )
+        staff = authenticate_staff_user(identifier, req.password)
+        if not staff:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials. Please verify your email and password.",
+            )
+        role = UserRole(staff["role"])
+        user_id = staff.get("id", identifier)
+        doc_reg = staff.get("doctor_registration_number") or req.doctor_registration_number
+        state_council = staff.get("state_council") or req.state_medical_council
+        full_name = staff.get("full_name")
+        hospital_id = staff.get("hospital_id")
+    else:
+        if "@" in identifier:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="No staff account found for this email address.",
+            )
+        role = req.role or UserRole.PATIENT
+        user_id = identifier
+        doc_reg = req.doctor_registration_number
+        state_council = req.state_medical_council
+        full_name = None
+        hospital_id = None
+
+        if not authenticate_credentials(user_id, role, req.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials. Please verify your user ID and password.",
+            )
+
+    if role == UserRole.DOCTOR:
+        if not doc_reg:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Doctor registration requires a valid NMC/State Medical Council registration number.",
             )
-        if not validate_doctor_registration(req.doctor_registration_number):
+        if not validate_doctor_registration(doc_reg):
             raise HTTPException(
-                status_code=400,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid medical registration number format. Must be an official NMC or State Council ID.",
             )
 
     token = create_token(
-        user_id=req.user_id,
-        role=req.role,
-        doctor_reg_no=req.doctor_registration_number,
-        state_council=req.state_medical_council,
+        user_id=user_id,
+        role=role,
+        doctor_reg_no=doc_reg,
+        state_council=state_council,
+        hospital_id=hospital_id,
     )
-    from app.auth import verify_token
     user = verify_token(token)
 
     get_audit_logger().log(
@@ -241,7 +379,70 @@ async def login(req: LoginRequest):
         role=user.role,
         is_verified_doctor=user.is_verified_doctor,
         doctor_registration_number=user.doctor_registration_number,
+        full_name=full_name,
+        hospital_id=hospital_id,
     )
+
+
+@app.post("/api/v1/auth/logout")
+async def logout(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    auth: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
+):
+    """Revoke active JWT token upon logout (B2.5)."""
+    if auth and auth.credentials:
+        revoke_token(auth.credentials)
+    get_audit_logger().log(
+        action="AUTH_LOGOUT",
+        user_id=current_user.user_id,
+        role=current_user.role.value,
+    )
+    return {"status": "success", "message": "Logged out successfully. Session invalidated."}
+
+
+@app.get("/api/v1/auth/me", response_model=AuthenticatedUser)
+async def get_me(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Retrieve profile and session claims for currently authenticated user."""
+    return current_user
+
+
+@app.get("/api/v1/patient/profiles")
+async def list_patient_profiles(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """List all patient profiles linked to authenticated phone account (B4.1)."""
+    from app.db import get_profiles_for_account
+    if not current_user.account_id:
+        return []
+    return get_profiles_for_account(current_user.account_id)
+
+
+@app.post("/api/v1/patient/profiles")
+async def create_patient_profile_endpoint(
+    req: PatientProfileCreate,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Register a new patient profile under verified phone account (B4.1)."""
+    if not current_user.account_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Authenticated patient phone account required to register profiles.",
+        )
+    from app.db import create_patient_profile, hash_password
+    profile_data = req.dict(exclude={"pin"})
+    if req.pin:
+        profile_data["pin_hash"] = hash_password(req.pin)
+
+    profile = create_patient_profile(current_user.account_id, profile_data)
+    get_audit_logger().log(
+        action="CREATE_PATIENT_PROFILE",
+        user_id=current_user.user_id,
+        role=current_user.role.value,
+        details={"profile_id": profile["id"], "relation": req.relation},
+    )
+    return profile
 
 
 @app.get("/api/v1/consent/notice")
@@ -640,7 +841,10 @@ async def submit_audio_async(
 
 
 @app.get("/api/v1/pipeline/job-status/{job_id}", response_model=JobProgressResponse)
-def get_job_status(job_id: str):
+def get_job_status(
+    job_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """
     Poll stage-by-stage progress of an asynchronous consultation triage job.
     """
@@ -708,6 +912,7 @@ class EscalateRequest(BaseModel):
 def check_in_consultation(
     consultation_id: str,
     req: CheckInRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     Record patient 2 to 3 day follow-up check-in ('improving', 'same', 'worse').
@@ -720,8 +925,8 @@ def check_in_consultation(
     )
     get_audit_logger().log(
         action="PATIENT_CHECK_IN",
-        user_id="patient",
-        role="patient",
+        user_id=current_user.user_id,
+        role=current_user.role.value,
         consultation_id=consultation_id,
         details={
             "status": req.status,
@@ -737,6 +942,7 @@ def check_in_consultation(
 def escalate_consultation(
     consultation_id: str,
     req: Optional[EscalateRequest] = None,
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     One-tap 'I feel worse' button action.
@@ -750,8 +956,8 @@ def escalate_consultation(
     )
     get_audit_logger().log(
         action="ONE_TAP_ESCALATE",
-        user_id="patient",
-        role="patient",
+        user_id=current_user.user_id,
+        role=current_user.role.value,
         consultation_id=consultation_id,
         details={
             "previous_tier": response.previous_tier.value,
@@ -763,7 +969,10 @@ def escalate_consultation(
 
 
 @app.get("/api/v1/consultations/{consultation_id}/thread", response_model=VoiceThread)
-def get_consultation_voice_thread(consultation_id: str):
+def get_consultation_voice_thread(
+    consultation_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """
     Retrieve asynchronous two-way bilingual voice thread messages.
     """
@@ -775,6 +984,7 @@ async def patient_voice_reply(
     consultation_id: str,
     audio: UploadFile = File(..., description="Patient spoken reply audio (WAV, WEBM)"),
     patient_language: str = Form("ta-IN", description="Patient language code"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     Two-way asynchronous voice thread: Patient speaks in regional dialect.
@@ -827,8 +1037,8 @@ async def patient_voice_reply(
 
         get_audit_logger().log(
             action="PATIENT_VOICE_REPLY",
-            user_id="patient",
-            role="patient",
+            user_id=current_user.user_id,
+            role=current_user.role.value,
             consultation_id=consultation_id,
             details={"patient_language": patient_language, "message_id": msg.message_id},
         )

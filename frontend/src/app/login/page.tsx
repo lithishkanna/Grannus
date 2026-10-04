@@ -1,13 +1,35 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ShieldCheck, Stethoscope, AlertCircle, CheckCircle2, Lock } from 'lucide-react';
+import {
+  ShieldCheck,
+  Stethoscope,
+  Phone,
+  User,
+  Users,
+  PlusCircle,
+  AlertCircle,
+  CheckCircle2,
+  Lock,
+  ArrowRight,
+  RefreshCw,
+  KeyRound,
+} from 'lucide-react';
+import {
+  requestPhoneOtp,
+  verifyPhoneOtp,
+  loginStaff,
+  getPatientProfiles,
+  createPatientProfile,
+  setActiveProfile,
+  PatientProfile,
+} from '@/lib/api';
 
 const STATE_COUNCILS = [
   'National Medical Commission (NMC)',
@@ -24,178 +46,636 @@ const STATE_COUNCILS = [
 
 export default function LoginPage() {
   const router = useRouter();
-  const [role, setRole] = useState<'doctor' | 'asha_worker' | 'admin'>('doctor');
-  const [userId, setUserId] = useState('');
-  const [password, setPassword] = useState('');
-  const [regNumber, setRegNumber] = useState('');
+
+  // Mode: 'patient' or 'staff'
+  const [authMode, setAuthMode] = useState<'patient' | 'staff'>('patient');
+
+  // Patient Phone OTP state
+  const [phone, setPhone] = useState('+919876543210');
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const [devOtpHint, setDevOtpHint] = useState<string | null>(null);
+
+  // Patient Profile state (Step 3)
+  const [profiles, setProfiles] = useState<PatientProfile[]>([]);
+  const [isSelectingProfile, setIsSelectingProfile] = useState(false);
+  const [showAddProfile, setShowAddProfile] = useState(false);
+  const [pinPromptProfile, setPinPromptProfile] = useState<PatientProfile | null>(null);
+  const [enteredPin, setEnteredPin] = useState('');
+
+  // Add profile form state
+  const [newFullName, setNewFullName] = useState('');
+  const [newAge, setNewAge] = useState('');
+  const [newGender, setNewGender] = useState('female');
+  const [newRelation, setNewRelation] = useState('self');
+  const [newLanguage, setNewLanguage] = useState('ta-IN');
+  const [newPin, setNewPin] = useState('');
+
+  // Staff login state
+  const [staffRole, setStaffRole] = useState<'doctor' | 'nurse' | 'admin'>('doctor');
+  const [staffIdentifier, setStaffIdentifier] = useState('dr.rajan@hospital.in');
+  const [staffPassword, setStaffPassword] = useState('grannus_secure_doctor_2026');
+  const [regNumber, setRegNumber] = useState('TNMC-54321');
   const [council, setCouncil] = useState(STATE_COUNCILS[0]);
+
+  // General state
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
-  const handleLogin = async (e: React.FormEvent) => {
+  // Cooldown countdown timer
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const interval = setInterval(() => {
+      setCooldown((c) => Math.max(0, c - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [cooldown]);
+
+  // 1. Request Phone OTP
+  const handleRequestOtp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setErrorMessage('');
+    setSuccessMessage('');
+    setIsLoading(true);
+
+    try {
+      const res = await requestPhoneOtp(phone.trim());
+      setOtpSent(true);
+      setCooldown(60);
+      if (res.dev_otp_hint) {
+        setDevOtpHint(res.dev_otp_hint);
+        setOtpCode(res.dev_otp_hint);
+      }
+      setSuccessMessage(res.message || 'Verification code sent to your phone.');
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to send verification code.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 2. Verify Phone OTP
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
     setIsLoading(true);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      await verifyPhoneOtp(phone.trim(), otpCode.trim());
+      setSuccessMessage('Phone verified! Loading family profiles...');
+
+      // Load patient profiles
+      const profs = await getPatientProfiles();
+      setProfiles(profs);
+      setIsSelectingProfile(true);
+
+      if (profs.length === 0) {
+        setShowAddProfile(true);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Verification code invalid.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 3. Select Profile
+  const handleSelectProfile = (profile: PatientProfile) => {
+    if (profile.pin_hash) {
+      setPinPromptProfile(profile);
+      setEnteredPin('');
+      return;
+    }
+    setActiveProfile(profile);
+    router.push('/input');
+  };
+
+  // 4. Verify PIN for Profile
+  const handleVerifyPin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pinPromptProfile) return;
+    setActiveProfile(pinPromptProfile);
+    setPinPromptProfile(null);
+    router.push('/input');
+  };
+
+  // 5. Create New Profile
+  const handleCreateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage('');
+    setIsLoading(true);
+
+    try {
+      const created = await createPatientProfile({
+        full_name: newFullName.trim(),
+        age: newAge.trim() || undefined,
+        gender: newGender,
+        relation: newRelation,
+        preferred_language: newLanguage,
+        pin: newPin.trim() || undefined,
+      });
+
+      setActiveProfile(created);
+      setSuccessMessage(`Profile created for ${created.full_name}! Redirecting to consultation...`);
+      setTimeout(() => {
+        router.push('/input');
+      }, 500);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to create profile.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 6. Staff Login
+  const handleStaffLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage('');
+    setSuccessMessage('');
+    setIsLoading(true);
+
+    try {
       const payload: Record<string, any> = {
-        user_id: userId.trim() || (role === 'doctor' ? 'dr_clinician' : 'admin_user'),
-        role: role,
-        password: password.trim() || (role === 'doctor' ? 'grannus_secure_doctor_2026' : 'grannus_secure_admin_2026'),
+        email: staffIdentifier.trim(),
+        user_id: staffIdentifier.trim(),
+        role: staffRole,
+        password: staffPassword.trim(),
       };
 
-      if (role === 'doctor') {
+      if (staffRole === 'doctor') {
         payload.doctor_registration_number = regNumber.trim();
         payload.state_medical_council = council;
       }
 
-      const res = await fetch(`${apiUrl}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail || 'Authentication failed. Please verify credentials.');
-      }
-
-      const data = await res.json();
-      localStorage.setItem('grannus_auth_token', data.token);
-      localStorage.setItem('grannus_user', JSON.stringify({
-        user_id: data.user_id,
-        role: data.role,
-        is_verified_doctor: data.is_verified_doctor,
-        doctor_registration_number: data.doctor_registration_number,
-      }));
-
-      setSuccessMessage('Credentials verified successfully! Redirecting...');
+      await loginStaff(payload);
+      setSuccessMessage('Clinician credentials verified! Entering dashboard...');
       setTimeout(() => {
         router.push('/dashboard');
-      }, 800);
+      }, 600);
     } catch (err: any) {
-      setErrorMessage(err.message || 'Verification error occurred.');
+      setErrorMessage(err.message || 'Staff authentication failed.');
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="container mx-auto px-4 py-16 max-w-lg animate-gentle-fade-in">
-      <div className="text-center mb-8">
+    <div className="container mx-auto px-4 py-12 max-w-lg animate-gentle-fade-in">
+      {/* Header */}
+      <div className="text-center mb-6">
         <div className="inline-flex p-3 bg-primary/10 rounded-full mb-3 text-primary">
-          <Stethoscope className="w-8 h-8" />
+          {authMode === 'patient' ? <Phone className="w-8 h-8" /> : <Stethoscope className="w-8 h-8" />}
         </div>
-        <h1 className="text-3xl font-heading font-semibold text-foreground">Clinician Access</h1>
+        <h1 className="text-3xl font-heading font-semibold text-foreground">
+          {authMode === 'patient' ? 'Patient Portal' : 'Clinician Access'}
+        </h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Telemedicine Practice Guidelines 2020 Registered Medical Practitioner Verification
+          {authMode === 'patient'
+            ? 'Voice Bridge with Urgency Routing — RuralCare AI'
+            : 'Telemedicine Practice Guidelines 2020 Registered Medical Practitioner Verification'}
         </p>
+
+        {/* Role Toggle Switch */}
+        <div className="flex bg-muted p-1 rounded-xl mt-5 border border-border">
+          <button
+            type="button"
+            onClick={() => {
+              setAuthMode('patient');
+              setErrorMessage('');
+              setSuccessMessage('');
+            }}
+            className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
+              authMode === 'patient'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Patient (Phone OTP)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAuthMode('staff');
+              setErrorMessage('');
+              setSuccessMessage('');
+            }}
+            className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
+              authMode === 'staff'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Doctor & Staff
+          </button>
+        </div>
       </div>
 
       <Card className="border border-border/80 shadow-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-xl">Authentication Portal</CardTitle>
+        <CardHeader className="space-y-1 pb-4">
+          <CardTitle className="text-xl">
+            {authMode === 'patient'
+              ? isSelectingProfile
+                ? 'Select Patient Profile'
+                : 'Patient Sign In'
+              : 'Medical Staff Authentication'}
+          </CardTitle>
           <CardDescription>
-            Enter your official registration details to review triage cases & sign prescriptions.
+            {authMode === 'patient'
+              ? isSelectingProfile
+                ? 'Who is this voice consultation for?'
+                : 'Enter your mobile number to receive a secure 6-digit OTP code.'
+              : 'Sign in with your hospital email and registered medical license.'}
           </CardDescription>
         </CardHeader>
+
         <CardContent>
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Access Role</Label>
-              <Select value={role} onValueChange={(val) => setRole((val as any) || 'doctor')}>
-                <SelectTrigger className="h-10">
-                  <SelectValue placeholder="Select role" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="doctor">Registered Medical Practitioner (Doctor)</SelectItem>
-                  <SelectItem value="asha_worker">ASHA / Community Health Worker</SelectItem>
-                  <SelectItem value="admin">Clinic Administrator</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          {/* ============================================================= */}
+          {/* PATIENT AUTH FLOW */}
+          {/* ============================================================= */}
+          {authMode === 'patient' && (
+            <div>
+              {/* Profile Selection Sub-Step */}
+              {isSelectingProfile ? (
+                <div className="space-y-4">
+                  {/* PIN Check Modal/Card */}
+                  {pinPromptProfile && (
+                    <form onSubmit={handleVerifyPin} className="p-4 bg-muted/60 rounded-xl border border-border space-y-3">
+                      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                        <KeyRound className="w-4 h-4 text-primary" />
+                        <span>Enter 4-Digit Profile PIN for {pinPromptProfile.full_name}</span>
+                      </div>
+                      <Input
+                        type="password"
+                        maxLength={4}
+                        placeholder="••••"
+                        value={enteredPin}
+                        onChange={(e) => setEnteredPin(e.target.value)}
+                        required
+                        className="text-center text-lg tracking-widest font-mono"
+                      />
+                      <div className="flex gap-2">
+                        <Button type="submit" size="sm" className="flex-1">
+                          Unlock Profile
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPinPromptProfile(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </form>
+                  )}
 
-            <div className="space-y-2">
-              <Label>Clinician / User ID</Label>
-              <Input
-                placeholder="e.g. dr_arun_kumar"
-                value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                required
-              />
-            </div>
+                  {/* Add Profile Form */}
+                  {showAddProfile ? (
+                    <form onSubmit={handleCreateProfile} className="space-y-3 p-4 bg-primary/5 rounded-xl border border-primary/20">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-semibold text-foreground">Add Family Member</h4>
+                        <button
+                          type="button"
+                          onClick={() => setShowAddProfile(false)}
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                      </div>
 
-            <div className="space-y-2">
-              <Label>Account Password</Label>
-              <Input
-                type="password"
-                placeholder="Enter password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Demo credentials default: {role === 'doctor' ? 'grannus_secure_doctor_2026' : 'grannus_secure_admin_2026'}
-              </p>
-            </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Full Name</Label>
+                        <Input
+                          placeholder="e.g. Ramesh Kumar"
+                          value={newFullName}
+                          onChange={(e) => setNewFullName(e.target.value)}
+                          required
+                          className="h-9"
+                        />
+                      </div>
 
-            {role === 'doctor' && (
-              <>
-                <div className="space-y-2">
-                  <Label>NMC / State Medical Council Registration No.</Label>
-                  <Input
-                    placeholder="e.g. TNMC-54321 or NMC-109283"
-                    value={regNumber}
-                    onChange={(e) => setRegNumber(e.target.value)}
-                    required
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    Required under MCI Telemedicine Guidelines 2020 for lawful digital prescription signing.
-                  </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Age</Label>
+                          <Input
+                            placeholder="e.g. 45"
+                            value={newAge}
+                            onChange={(e) => setNewAge(e.target.value)}
+                            className="h-9"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Gender</Label>
+                          <Select value={newGender} onValueChange={(val) => setNewGender(val || 'female')}>
+                            <SelectTrigger className="h-9">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="female">Female</SelectItem>
+                              <SelectItem value="male">Male</SelectItem>
+                              <SelectItem value="other">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Relation</Label>
+                          <Select value={newRelation} onValueChange={(val) => setNewRelation(val || 'self')}>
+                            <SelectTrigger className="h-9">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="self">Self</SelectItem>
+                              <SelectItem value="mother">Mother</SelectItem>
+                              <SelectItem value="father">Father</SelectItem>
+                              <SelectItem value="child">Child</SelectItem>
+                              <SelectItem value="spouse">Spouse</SelectItem>
+                              <SelectItem value="other">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Preferred Language</Label>
+                          <Select value={newLanguage} onValueChange={(val) => setNewLanguage(val || 'ta-IN')}>
+                            <SelectTrigger className="h-9">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ta-IN">Tamil (தமிழ்)</SelectItem>
+                              <SelectItem value="hi-IN">Hindi (हिन्दी)</SelectItem>
+                              <SelectItem value="te-IN">Telugu (తెలుగు)</SelectItem>
+                              <SelectItem value="en-IN">English</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-xs">Optional 4-Digit Privacy PIN</Label>
+                        <Input
+                          type="password"
+                          maxLength={4}
+                          placeholder="Leave blank for open access"
+                          value={newPin}
+                          onChange={(e) => setNewPin(e.target.value)}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+
+                      <Button type="submit" disabled={isLoading} className="w-full mt-2 h-9 text-xs">
+                        {isLoading ? 'Creating...' : 'Save & Select Profile'}
+                      </Button>
+                    </form>
+                  ) : (
+                    <>
+                      {/* Existing Profiles List */}
+                      <div className="space-y-2">
+                        {profiles.map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => handleSelectProfile(p)}
+                            className="w-full p-3.5 rounded-xl border border-border bg-card hover:bg-muted/50 transition-all text-left flex items-center justify-between group"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
+                                {p.full_name.charAt(0).toUpperCase()}
+                              </div>
+                              <div>
+                                <h4 className="font-medium text-foreground text-sm flex items-center gap-1.5">
+                                  {p.full_name}
+                                  {p.pin_hash && <Lock className="w-3.5 h-3.5 text-muted-foreground" />}
+                                </h4>
+                                <p className="text-xs text-muted-foreground capitalize">
+                                  {p.relation} • {p.age ? `${p.age} yrs` : ''} {p.gender ? `• ${p.gender}` : ''}
+                                </p>
+                              </div>
+                            </div>
+                            <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+                          </button>
+                        ))}
+                      </div>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setShowAddProfile(true)}
+                        className="w-full h-10 border-dashed gap-2 text-xs"
+                      >
+                        <PlusCircle className="w-4 h-4" />
+                        Add Family Member
+                      </Button>
+                    </>
+                  )}
                 </div>
+              ) : !otpSent ? (
+                /* Step 1: Phone Input */
+                <form onSubmit={handleRequestOtp} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Mobile Phone Number</Label>
+                    <div className="relative">
+                      <Input
+                        type="tel"
+                        placeholder="+91 98765 43210"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        required
+                        className="h-11 pl-10 text-base"
+                      />
+                      <Phone className="w-4 h-4 text-muted-foreground absolute left-3 top-3.5" />
+                    </div>
+                  </div>
 
-                <div className="space-y-2">
-                  <Label>Registered Medical Council</Label>
-                  <Select value={council} onValueChange={(val) => setCouncil(val || STATE_COUNCILS[0])}>
-                    <SelectTrigger className="h-10">
-                      <SelectValue placeholder="Select Council" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {STATE_COUNCILS.map((c) => (
-                        <SelectItem key={c} value={c}>{c}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </>
-            )}
+                  {/* Dev Test Number Hint Box */}
+                  <div className="p-3 bg-muted/60 border border-border/80 rounded-xl text-xs space-y-1">
+                    <div className="font-medium text-foreground flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                      <span>Development / Demo Test Numbers</span>
+                    </div>
+                    <p className="text-muted-foreground">
+                      Use <span className="font-mono text-foreground font-semibold">+919876543210</span> (Code: <span className="font-mono font-semibold">123456</span>) to bypass external SMS network.
+                    </p>
+                  </div>
 
-            {errorMessage && (
-              <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg flex items-center gap-2 text-xs text-destructive">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{errorMessage}</span>
+                  <Button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full h-11 rounded-lg font-medium gap-2 text-sm"
+                  >
+                    {isLoading ? 'Sending Code...' : 'Send Verification Code'}
+                    <ArrowRight className="w-4 h-4" />
+                  </Button>
+                </form>
+              ) : (
+                /* Step 2: OTP Verification */
+                <form onSubmit={handleVerifyOtp} className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>6-Digit Verification Code</Label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOtpSent(false);
+                          setErrorMessage('');
+                        }}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        Change number
+                      </button>
+                    </div>
+                    <Input
+                      type="text"
+                      maxLength={6}
+                      placeholder="123456"
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value)}
+                      required
+                      className="h-12 text-center text-2xl tracking-widest font-mono font-semibold"
+                    />
+                    <p className="text-xs text-muted-foreground text-center">
+                      Code sent to <span className="font-semibold text-foreground">{phone}</span>
+                    </p>
+                  </div>
+
+                  {devOtpHint && (
+                    <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-xs text-emerald-700 dark:text-emerald-400 text-center">
+                      Demo Code: <span className="font-mono font-bold tracking-wider">{devOtpHint}</span>
+                    </div>
+                  )}
+
+                  <Button
+                    type="submit"
+                    disabled={isLoading || otpCode.length < 6}
+                    className="w-full h-11 rounded-lg font-medium gap-2 text-sm"
+                  >
+                    <Lock className="w-4 h-4" />
+                    {isLoading ? 'Verifying Code...' : 'Verify & Continue'}
+                  </Button>
+
+                  <div className="text-center pt-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={cooldown > 0 || isLoading}
+                      onClick={() => handleRequestOtp()}
+                      className="text-xs text-muted-foreground gap-1.5"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      {cooldown > 0 ? `Resend code in ${cooldown}s` : 'Resend Code'}
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* ============================================================= */}
+          {/* STAFF AUTH FLOW */}
+          {/* ============================================================= */}
+          {authMode === 'staff' && (
+            <form onSubmit={handleStaffLogin} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Hospital Staff Role</Label>
+                <Select value={staffRole} onValueChange={(val: any) => setStaffRole(val || 'doctor')}>
+                  <SelectTrigger className="h-10">
+                    <SelectValue placeholder="Select role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="doctor">Registered Medical Practitioner (Doctor)</SelectItem>
+                    <SelectItem value="nurse">Staff Nurse</SelectItem>
+                    <SelectItem value="admin">Hospital Administrator</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            )}
 
-            {successMessage && (
-              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400">
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>{successMessage}</span>
+              <div className="space-y-2">
+                <Label>Hospital Email / Clinician ID</Label>
+                <Input
+                  placeholder="e.g. dr.rajan@hospital.in"
+                  value={staffIdentifier}
+                  onChange={(e) => setStaffIdentifier(e.target.value)}
+                  required
+                />
               </div>
-            )}
 
-            <Button
-              type="submit"
-              disabled={isLoading}
-              className="w-full mt-4 h-11 rounded-lg font-medium gap-2"
-            >
-              <Lock className="w-4 h-4" />
-              {isLoading ? 'Verifying Credentials...' : 'Verify & Enter Dashboard'}
-            </Button>
-          </form>
+              <div className="space-y-2">
+                <Label>Account Password</Label>
+                <Input
+                  type="password"
+                  placeholder="Enter secure password"
+                  value={staffPassword}
+                  onChange={(e) => setStaffPassword(e.target.value)}
+                  required
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Demo credentials: <span className="font-mono">dr.rajan@hospital.in</span> / <span className="font-mono">grannus_secure_doctor_2026</span>
+                </p>
+              </div>
+
+              {staffRole === 'doctor' && (
+                <>
+                  <div className="space-y-2">
+                    <Label>NMC / State Medical Council Registration No.</Label>
+                    <Input
+                      placeholder="e.g. TNMC-54321 or NMC-109283"
+                      value={regNumber}
+                      onChange={(e) => setRegNumber(e.target.value)}
+                      required
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Required under Telemedicine Practice Guidelines 2020 for lawful digital triage review.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Registered Medical Council</Label>
+                    <Select value={council} onValueChange={(val) => setCouncil(val || STATE_COUNCILS[0])}>
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder="Select Council" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STATE_COUNCILS.map((c) => (
+                          <SelectItem key={c} value={c}>{c}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
+
+              <Button
+                type="submit"
+                disabled={isLoading}
+                className="w-full mt-4 h-11 rounded-lg font-medium gap-2"
+              >
+                <Lock className="w-4 h-4" />
+                {isLoading ? 'Verifying Credentials...' : 'Verify & Enter Dashboard'}
+              </Button>
+            </form>
+          )}
+
+          {/* Feedback Messages */}
+          {errorMessage && (
+            <div className="p-3 mt-4 bg-destructive/10 border border-destructive/30 rounded-lg flex items-center gap-2 text-xs text-destructive">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {successMessage && (
+            <div className="p-3 mt-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{successMessage}</span>
+            </div>
+          )}
         </CardContent>
+
         <CardFooter className="flex flex-col text-center border-t border-border/60 pt-4 pb-4">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center">
             <ShieldCheck className="w-4 h-4 text-emerald-600" />

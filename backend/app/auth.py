@@ -88,6 +88,7 @@ def authenticate_credentials(user_id: str, role: "UserRole", password: Optional[
 class UserRole(str, Enum):
     PATIENT = "patient"
     DOCTOR = "doctor"
+    NURSE = "nurse"
     ADMIN = "admin"
     ASHA_WORKER = "asha_worker"
 
@@ -99,6 +100,10 @@ class AuthenticatedUser(BaseModel):
     doctor_registration_number: Optional[str] = None
     state_medical_council: Optional[str] = None
     is_verified_doctor: bool = False
+    phone_number: Optional[str] = None
+    account_id: Optional[str] = None
+    profile_id: Optional[str] = None
+    hospital_id: Optional[str] = None
 
 
 # NMC / State Medical Council registration format (e.g. "MCI-41982", "TN-67890", "123456")
@@ -112,11 +117,29 @@ def validate_doctor_registration(reg_number: str) -> bool:
     return bool(DOCTOR_REG_REGEX.match(reg_number.strip()))
 
 
+# Set of revoked token signatures (logout / revocation support B2.5)
+_REVOKED_TOKENS: set = set()
+
+
+def revoke_token(token: str) -> None:
+    """Revoke an active JWT token upon logout."""
+    if token:
+        _REVOKED_TOKENS.add(token.strip())
+
+
+def is_token_revoked(token: str) -> bool:
+    return token.strip() in _REVOKED_TOKENS
+
+
 def create_token(
     user_id: str,
     role: UserRole,
     doctor_reg_no: Optional[str] = None,
     state_council: Optional[str] = None,
+    phone_number: Optional[str] = None,
+    account_id: Optional[str] = None,
+    profile_id: Optional[str] = None,
+    hospital_id: Optional[str] = None,
     expires_in_seconds: int = 86400,
 ) -> str:
     """
@@ -134,6 +157,10 @@ def create_token(
         "doc_reg": doctor_reg_no,
         "state_council": state_council,
         "verified_doctor": is_verified,
+        "phone": phone_number,
+        "account_id": account_id,
+        "profile_id": profile_id,
+        "hospital_id": hospital_id,
         "iat": int(time.time()),
         "exp": int(time.time()) + expires_in_seconds,
     }
@@ -145,6 +172,13 @@ def create_token(
 
 def verify_token(token: str) -> AuthenticatedUser:
     """Validate and decode signed token."""
+    if is_token_revoked(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked or logged out.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     secret = get_signing_secret()
 
     try:
@@ -171,6 +205,10 @@ def verify_token(token: str) -> AuthenticatedUser:
             doctor_registration_number=payload.get("doc_reg"),
             state_medical_council=payload.get("state_council"),
             is_verified_doctor=payload.get("verified_doctor", False),
+            phone_number=payload.get("phone"),
+            account_id=payload.get("account_id"),
+            profile_id=payload.get("profile_id"),
+            hospital_id=payload.get("hospital_id"),
         )
     except Exception:
         raise HTTPException(

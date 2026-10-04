@@ -113,16 +113,18 @@ def test_job_manager_lifecycle():
 def test_job_status_api_endpoints():
     mgr = get_job_manager()
     job_id = mgr.create_job()
+    token = create_token("test_doc_01", UserRole.DOCTOR, doctor_reg_no="TNMC-54321")
+    headers = {"Authorization": f"Bearer {token}"}
 
     # Query existing job
-    res = client.get(f"/api/v1/pipeline/job-status/{job_id}")
+    res = client.get(f"/api/v1/pipeline/job-status/{job_id}", headers=headers)
     assert res.status_code == 200
     data = res.json()
     assert data["job_id"] == job_id
     assert data["status"] == "QUEUED"
 
     # Query non-existent job -> 404
-    res_404 = client.get("/api/v1/pipeline/job-status/non_existent_job_123")
+    res_404 = client.get("/api/v1/pipeline/job-status/non_existent_job_123", headers=headers)
     assert res_404.status_code == 404
 
 

@@ -56,6 +56,16 @@ class FollowUpManager:
             follow_up_due_at=due_at,
         )
         self._records[consultation_id] = record
+        try:
+            from app.db import save_follow_up_record
+            save_follow_up_record(consultation_id, {
+                "consultation_id": consultation_id,
+                "urgency_tier": record.current_tier.value,
+                "scheduled_for": str(record.follow_up_due_at),
+                "status": "PENDING",
+            })
+        except Exception:
+            pass
         logger.info(
             "Registered follow-up consultation_id=%s tier=%s due_in_days=%d",
             consultation_id, urgency_tier.value, follow_up_days
@@ -63,7 +73,27 @@ class FollowUpManager:
         return record
 
     def get_record(self, consultation_id: str) -> Optional[ConsultationFollowUpRecord]:
-        return self._records.get(consultation_id)
+        if consultation_id in self._records:
+            return self._records[consultation_id]
+        try:
+            from app.db import get_follow_up_record
+            data = get_follow_up_record(consultation_id)
+            if data:
+                tier_val = data.get("urgency_tier", "self_care")
+                tier = UrgencyTier(tier_val) if tier_val in [t.value for t in UrgencyTier] else UrgencyTier.SELF_CARE
+                rec = ConsultationFollowUpRecord(
+                    consultation_id=consultation_id,
+                    patient_id=data.get("profile_id"),
+                    initial_tier=tier,
+                    current_tier=tier,
+                    created_at=time.time(),
+                    follow_up_due_at=time.time() + 172800,
+                )
+                self._records[consultation_id] = rec
+                return rec
+        except Exception:
+            pass
+        return None
 
     def record_check_in(
         self,
@@ -100,6 +130,18 @@ class FollowUpManager:
             "notes": notes,
             "tier_at_check_in": previous_tier.value,
         })
+        try:
+            from app.db import save_follow_up_record
+            save_follow_up_record(consultation_id, {
+                "consultation_id": consultation_id,
+                "urgency_tier": previous_tier.value,
+                "status": "CHECKED_IN",
+                "patient_status": status_norm,
+                "patient_feedback": notes,
+                "checked_in_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            })
+        except Exception:
+            pass
 
         msg = (
             "Thank you for checking in. We are glad your symptoms are improving. Continue your rest and hydration."
@@ -170,6 +212,18 @@ class FollowUpManager:
             "escalated_to": new_tier.value,
             "reason": escalation_reason,
         })
+        try:
+            from app.db import save_follow_up_record
+            save_follow_up_record(consultation_id, {
+                "consultation_id": consultation_id,
+                "urgency_tier": new_tier.value,
+                "status": "ESCALATED",
+                "patient_status": "worse",
+                "patient_feedback": escalation_reason,
+                "checked_in_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            })
+        except Exception:
+            pass
 
         logger.warning(
             "ESCALATION APPLIED consultation_id=%s from=%s to=%s reason=%s",
