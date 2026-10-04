@@ -1,13 +1,11 @@
 """
-Approved Clinical Home Remedy Library for RuralCare AI (Grannus).
+Reference Home Remedy Library for RuralCare AI (Grannus).
 
-Evidence-based, clinician-vetted self-care guidance for mild, self-limiting
-rural health conditions (Tier 4: Self-Care).
+Educational self-care information for mild, self-limiting
+rural health complaints (Tier 4: Self-Care). Synthetic demonstration library.
 
-Compliant with:
-  - WHO Integrated Management of Childhood Illness (IMCI) Home Care Protocols
-  - National Health Mission (NHM) Primary Healthcare Guidelines
-  - Strict Safety Invariant: Every remedy MUST carry explicit 'See a Doctor If' red-flag criteria
+Strict Safety Invariant: Every remedy MUST carry explicit 'See a Doctor If' red-flag criteria.
+Does not replace clinician advice.
 """
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field

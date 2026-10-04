@@ -1,17 +1,20 @@
-# Grannus (RuralCare AI) — Clinical Validation & Evaluation Report
+# Grannus (RuralCare AI) — Clinical Evaluation Report (Synthetic Benchmark)
 
 **Document ID**: `GRANNUS-VAL-REP-2026-V1`  
-**Phase**: Clinical Validation and Machine Learning  
-**Standard**: Indian National Telemedicine Practice Guidelines (2020), WHO IMCI / ETAT Protocols, and ABDM Telehealth Decision Support Standards  
+**Standard**: Indian National Telemedicine Practice Guidelines (2020), Protocol-Derived Reference Triage  
 **Evaluation Set**: 360 Protocol-Derived Synthetic Clinical Cases (`backend/eval/gold_evaluation_set.json`)  
 **Date of Evaluation**: October 3, 2026  
-**Status**: **SYNTHETIC BENCHMARK VALIDATED — PASSED ALL CLINICAL EXIT CRITERIA**  
+**Status**: **SYNTHETIC BENCHMARK EVALUATED — ALGORITHM VERIFICATION PASSED**  
+
+> [!IMPORTANT]
+> **Synthetic benchmark only: evaluated against 360 generated clinical scenarios. No real-patient data or named clinician sign-off has occurred.**
+> Grannus is a voice bridge with urgency routing for outreach. It routes by complaint category and translates; it does not diagnose.
 
 ---
 
 ## 1. Executive Summary
 
-This report documents the rigorous clinical validation of **Grannus (RuralCare AI)**, a voice-first multilingual telehealth triage decision-support platform designed for rural India. The evaluation was conducted across **360 synthetic, protocol-derived clinical cases** representing common, urgent, and life-threatening conditions in **English, Tamil, Hindi, Telugu, and code-mixed dialects (Tanglish, Hinglish)**. All cases, ground truths, and evaluation metrics in this benchmark are strictly synthetic and derived from standard clinical triage guidelines.
+This report documents the synthetic benchmark evaluation of **Grannus (RuralCare AI)**, a voice-first multilingual telehealth triage decision-support platform designed for rural India. The evaluation was conducted across **360 synthetic, protocol-derived clinical cases** representing common, urgent, and life-threatening conditions in **English, Tamil, Hindi, Telugu, and code-mixed dialects (Tanglish, Hinglish)**. All cases, ground truths, and evaluation metrics in this benchmark are strictly synthetic.
 
 ### Key Clinical Highlights
 - **Emergency Sensitivity**: **100.00%** (exceeding the strict safety target of $\ge 99.0\%$).

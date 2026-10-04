@@ -1,10 +1,8 @@
-# Grannus 
+# Grannus (RuralCare AI)
 
-> **Bridging the healthcare and language gap between rural patients and urban doctors in India.**
+> **Grannus is a voice-driven intake and urgency-routing assistant for rural hospital outreach. It routes by complaint category and translates; it does not diagnose. All validation data is currently synthetic.**
 
-Grannus  is a multilingual, voice-first triage platform. Our mission is simple: allow rural patients to explain their symptoms naturally in their native regional language, and instantly provide urban doctors with structured, English-translated, medically-accurate summaries. 
-
-By combining cutting-edge speech-to-text, LLM-based medical extraction, safety red-flag screening, and a beautiful, calming "Wabi-Sabi" user interface, Grannus brings world-class healthcare triage to the most remote areas.
+Grannus is a voice bridge with urgency routing for rural outreach. A patient speaks symptoms in their own regional language. The system translates and structures the complaint, assigns an urgency tier, and routes it to the right department and an available doctor. Mild cases get fixed, approved self-care information. Serious cases go to a doctor. Emergencies get the "call 108 / go to nearest ER" screen immediately.
 
 ---
 

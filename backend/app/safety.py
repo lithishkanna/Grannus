@@ -33,7 +33,7 @@ RED_FLAG_RULES: List[Tuple[List[str], bool, str, str, str]] = [
     (["loss of consciousness", "fainting", "unconscious", "passed out", "blackout"], False, "critical", "emergency_referral", "Loss of consciousness reported"),
 
     (["severe bleeding", "heavy bleeding", "uncontrolled bleeding"], False, "critical", "emergency_referral", "Severe bleeding reported"),
-    (["bleeding"], True, "critical", "emergency_referral", "Severe bleeding reported"),
+    (["bleeding", "blood loss", "hemorrhage", "active bleeding"], False, "high", "clinician_review", "Bleeding reported"),
 
     # 0.9: "fits" matched with word boundaries via _matches_keyword
     (["seizure", "convulsion", "fits"], False, "critical", "emergency_referral", "Seizure or convulsions reported"),
@@ -65,7 +65,7 @@ RED_FLAG_RULES: List[Tuple[List[str], bool, str, str, str]] = [
     (["severe headache", "thunderclap", "worst headache"], False, "high", "clinician_review", "Severe headache reported"),
     (["headache"], True, "high", "clinician_review", "Severe headache reported"),
 
-    (["vomiting blood", "blood in stool"], False, "high", "clinician_review", "Vomiting blood or blood in stool reported"),
+    (["vomiting blood", "blood in vomit", "vomited blood", "vomited and there was blood", "vomited and saw blood", "blood when vomiting", "blood while vomiting", "hematemesis", "blood in stool", "rectal bleeding", "blood in motions", "passing blood"], False, "high", "clinician_review", "Vomiting blood or gastrointestinal bleeding reported"),
 
     (["severe dehydration"], False, "high", "clinician_review", "Severe dehydration reported"),
     (["dehydration"], True, "high", "clinician_review", "Severe dehydration reported"),
@@ -121,6 +121,26 @@ INDIC_RED_FLAG_RULES: List[Tuple[List[str], bool, str, str, str]] = [
             "తీవ్రమైన రక్తస్రావం", "raktasravam",
         ],
         False, "critical", "emergency_referral", "Severe bleeding reported (Indic)",
+    ),
+
+    # Bleeding (high)
+    (
+        [
+            "ரத்தம்", "ரத்தப்போக்கு", "rathapokku", "ratham",
+            "खून", "रक्त", "khoon behna", "khoon nikal", "khoon aana",
+            "రక్తం", "రక్తస్రావం", "raktham",
+        ],
+        False, "high", "clinician_review", "Bleeding reported (Indic)",
+    ),
+
+    # Vomiting blood (high)
+    (
+        [
+            "வாந்தியில் ரத்தம்", "ரத்த வாந்தி", "vaanthiyil ratham", "ratha vaanthi",
+            "उल्टी में खून", "खून की उल्टी", "ulti me khoon", "khoon ki ulti",
+            "వాంతిలో రక్తం", "రక్తం వాంతి", "vaanthilo raktham", "raktham vanthi",
+        ],
+        False, "high", "clinician_review", "Vomiting blood reported (Indic)",
     ),
 
     # Seizure / Fits
@@ -216,11 +236,11 @@ _NEGATION_PATTERNS = [
     # English negations
     r"\b(?:no|not|don't|dont|does\s*not|doesn't|doesnt|didn't|didnt|did\s*not|denies|denied|without|never|haven't|havent|have\s*no|has\s*no|free\s*of)\b",
     # Indic negations (Tamil - Unicode script & transliterations with word boundaries)
-    r"(?:இல்லை|இல்ல|கிடையாது|\b(?:illai|illa|kidaiyathu)\b)",
-    # Indic negations (Hindi - Unicode script & transliterations with word boundaries)
-    r"(?:नहीं|ना|नही|\b(?:nahi|nahin|na|mat)\b)",
+    r"(?:^|[\s.,;!?|\n\r])(?:இல்லை|இல்ல|கிடையாது|\b(?:illai|illa|kidaiyathu)\b)(?:$|[\s.,;!?|\n\r])",
+    # Indic negations (Hindi - Unicode script & transliterations with word boundaries to avoid 'ना' matching inside 'पसीना')
+    r"(?:^|[\s.,;!?|\n\r])(?:नहीं|नही|ना|\b(?:nahi|nahin|na|mat)\b)(?:$|[\s.,;!?|\n\r])",
     # Indic negations (Telugu - Unicode script & transliterations with word boundaries)
-    r"(?:లేదు|కాదు|\b(?:ledu|kadu)\b)",
+    r"(?:^|[\s.,;!?|\n\r])(?:లేదు|కాదు|లేవు|\b(?:ledu|kadu|levu)\b)(?:$|[\s.,;!?|\n\r])",
 ]
 
 # Delimiters that separate syntactic clauses (punctuation & contrastive conjunctions)
@@ -420,25 +440,42 @@ def screen_safety(
                 matched_reasons.add(out_reason)
 
     # 1. Process symptoms from structured summary
-    if summary and summary.symptoms:
-        for symptom in summary.symptoms:
-            text_to_check = (symptom.name or "").lower()
-            if symptom.raw_text:
-                text_to_check += f" {symptom.raw_text.lower()}"
+    has_sweating = False
+    _SWEATING_TERMS = [
+        "sweat", "sweating", "cold sweat", "profuse sweating", "diaphoresis", "perspiration",
+        "पसीना", "pasina",
+        "வேர்வை", "vervai", "வியர்வை",
+        "చెమట", "chematalu", "chemata",
+    ]
 
-            # 0.8: Breathing status is known if mentioned anywhere, even if negated
-            if any(kw in text_to_check for kw in ["breath", "breathing", "respiration"]):
-                has_breathing_info = True
+    if summary:
+        if summary.chief_complaint:
+            cc_lower = summary.chief_complaint.lower()
+            if any(sw in cc_lower for sw in _SWEATING_TERMS) and not is_text_negated(cc_lower):
+                has_sweating = True
 
-            # SKIP negated symptoms for active red flags
-            if symptom.negated:
-                continue
+        if summary.symptoms:
+            for symptom in summary.symptoms:
+                text_to_check = (symptom.name or "").lower()
+                if symptom.raw_text:
+                    text_to_check += f" {symptom.raw_text.lower()}"
 
-            is_severe = symptom.severity in (Severity.SEVERE, Severity.UNBEARABLE)
-            check_text_against_rules(text_to_check, is_severe, symptom.name)
+                # 0.8: Breathing status is known if mentioned anywhere, even if negated
+                if any(kw in text_to_check for kw in ["breath", "breathing", "respiration"]):
+                    has_breathing_info = True
 
-            if "chest pain" in text_to_check:
-                has_chest_pain = True
+                # SKIP negated symptoms for active red flags
+                if symptom.negated:
+                    continue
+
+                if any(sw in text_to_check for sw in _SWEATING_TERMS):
+                    has_sweating = True
+
+                is_severe = symptom.severity in (Severity.SEVERE, Severity.UNBEARABLE)
+                check_text_against_rules(text_to_check, is_severe, symptom.name)
+
+                if "chest pain" in text_to_check:
+                    has_chest_pain = True
 
     # 2. Process Gemini-extracted red flags with negation check (0.8)
     if summary and summary.red_flags:
@@ -484,6 +521,17 @@ def screen_safety(
         has_chest_pain = has_chest_pain or raw_chest_pain
         has_breathing_info = has_breathing_info or raw_breathing_info
 
+        # Scan raw transcripts for sweating
+        for raw_t in [transcript_english, transcript_original]:
+            if not raw_t:
+                continue
+            raw_t_lower = raw_t.lower()
+            for sw in _SWEATING_TERMS:
+                for start_idx, end_idx in _matches_keyword(sw, raw_t_lower):
+                    if not is_negated_match(raw_t_lower, start_idx, end_idx):
+                        has_sweating = True
+                        break
+
     # 4. Deduplicate red flags
     unique_flags = []
     seen = set()
@@ -518,7 +566,7 @@ def screen_safety(
             final_flags.append(SafetyRedFlag(
                 potential_red_flag=True,
                 symptom="respiratory_distress_acoustic",
-                reason="Respiratory distress detected from audio analysis (coughing/wheezing/breathlessness) [Advisory]",
+                reason="Respiratory distress detected from acoustic biomarker analysis (coughing/wheezing/breathlessness) [Advisory - Experimental]",
                 action="clinician_review",
                 severity="high",
             ))
@@ -526,7 +574,7 @@ def screen_safety(
             final_flags.append(SafetyRedFlag(
                 potential_red_flag=True,
                 symptom="respiratory_distress_acoustic",
-                reason="Respiratory distress detected from audio analysis (coughing/wheezing/breathlessness) [Advisory]",
+                reason="Respiratory distress detected from acoustic biomarker analysis (coughing/wheezing/breathlessness) [Advisory - Experimental]",
                 action="clinician_review",
                 severity="moderate",
             ))
@@ -547,4 +595,6 @@ def screen_safety(
         has_critical_flags=has_critical_flags,
         override_priority=override_priority,
         missing_critical_info=missing_critical_info,
+        has_chest_pain=has_chest_pain,
+        has_sweating=has_sweating,
     )

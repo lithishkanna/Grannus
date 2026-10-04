@@ -11,11 +11,11 @@ Explainable priority assessment output with level, confidence, emergency overrid
 triggered rules, and contributing reasons.
 """
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.feature_extraction import extract_features
 from app.ml_model import get_model
-from app.safety import screen_safety
+from app.safety import screen_safety, is_text_negated
 from app.schemas import (
     PriorityAssessment,
     PriorityLevel,
@@ -274,11 +274,168 @@ def _comorbidity_escalation(patient_context: dict, summary: StructuredMedicalSum
     return extra_score, reasons
 
 
+def _parse_patient_age(age_val: Any) -> Optional[float]:
+    if age_val is None:
+        return None
+    try:
+        age_str = str(age_val).strip().lower()
+        import re
+        digits = re.findall(r"\d+(?:\.\d+)?", age_str)
+        if not digits:
+            return None
+        val = float(digits[0])
+        if any(unit in age_str for unit in ["month", "week", "day", "mth"]):
+            if "week" in age_str:
+                return val / 52.0
+            if "day" in age_str:
+                return val / 365.0
+            return val / 12.0
+        return val
+    except (ValueError, TypeError):
+        return None
+
+
+_SWEAT_KEYWORDS = [
+    "sweat", "sweating", "cold sweat", "profuse sweating", "diaphoresis", "perspiration",
+    "पसीना", "pasina",
+    "வேர்வை", "vervai", "வியர்வை",
+    "చెమట", "chematalu", "chemata",
+]
+
+
+def _has_chest_pain(
+    safety_screening: Optional[SafetyScreening],
+    summary: Optional[StructuredMedicalSummary],
+    patient_context: Optional[dict],
+) -> bool:
+    if safety_screening and getattr(safety_screening, "has_chest_pain", False):
+        return True
+    if safety_screening and safety_screening.red_flags:
+        for f in safety_screening.red_flags:
+            txt = f"{f.symptom} {f.reason}".lower()
+            if "chest pain" in txt or any(k in txt for k in ["நெஞ்சு", "மார்பு", "सीने", "छाती", "ఛాతీ", "nenju", "marbu", "seene", "chhati", "chati"]):
+                return True
+    if summary:
+        for s in summary.symptoms:
+            if not s.negated:
+                txt = f"{s.name} {s.raw_text or ''}".lower()
+                if "chest pain" in txt or any(k in txt for k in ["நெஞ்சு", "மார்பு", "सीने", "छाती", "ఛాతీ", "nenju", "marbu", "seene", "chhati", "chati"]):
+                    return True
+        if summary.chief_complaint and "chest pain" in summary.chief_complaint.lower():
+            if not is_text_negated(summary.chief_complaint):
+                return True
+    if patient_context:
+        raw = f"{patient_context.get('chief_complaint', '')} {patient_context.get('raw_text', '')}".lower()
+        if "chest pain" in raw and not is_text_negated(raw):
+            return True
+    return False
+
+
+def _has_sweating(
+    safety_screening: Optional[SafetyScreening],
+    summary: Optional[StructuredMedicalSummary],
+    patient_context: Optional[dict],
+) -> bool:
+    if safety_screening and getattr(safety_screening, "has_sweating", False):
+        return True
+    if summary:
+        for s in summary.symptoms:
+            if not s.negated:
+                txt = f"{s.name} {s.raw_text or ''}".lower()
+                if any(k in txt for k in _SWEAT_KEYWORDS):
+                    return True
+        if summary.chief_complaint:
+            cc = summary.chief_complaint.lower()
+            if any(k in cc for k in _SWEAT_KEYWORDS) and not is_text_negated(cc):
+                return True
+    if patient_context:
+        txt = " ".join(str(v).lower() for v in patient_context.values())
+        if any(k in txt for k in _SWEAT_KEYWORDS):
+            return True
+    return False
+
+
+def _has_breathlessness(
+    safety_screening: Optional[SafetyScreening],
+    summary: Optional[StructuredMedicalSummary],
+) -> bool:
+    if safety_screening and safety_screening.red_flags:
+        for f in safety_screening.red_flags:
+            txt = f"{f.symptom} {f.reason}".lower()
+            if any(b in txt for b in ["breath", "breathing", "respiration", "dyspnea", "moochu", "saans", "swasa", "aayasam"]):
+                return True
+    if summary:
+        for s in summary.symptoms:
+            if not s.negated:
+                txt = f"{s.name} {s.raw_text or ''}".lower()
+                if any(b in txt for b in ["breath", "breathing", "respiration", "dyspnea", "moochu", "saans", "swasa", "aayasam"]):
+                    return True
+    return False
+
+
+def _is_patient_pregnant_helper(
+    patient_context: Optional[dict],
+    summary: Optional[StructuredMedicalSummary],
+) -> bool:
+    if patient_context:
+        is_preg = str(patient_context.get("is_pregnant", "")).strip().lower() in ("yes", "true", "1")
+        if not is_preg:
+            is_preg = str(patient_context.get("pregnancy", "")).strip().lower() in ("yes", "true", "1")
+        if is_preg:
+            return True
+        c_str = " ".join(str(v).lower() for v in patient_context.values())
+        if any(pw in c_str for pw in ["pregnant", "pregnancy", "trimester", "gestation"]):
+            return True
+    if summary:
+        c_str = " ".join(summary.existing_conditions).lower() + " " + (summary.relevant_history or "").lower()
+        if any(pw in c_str for pw in ["pregnant", "pregnancy", "trimester", "gestation"]):
+            return True
+    return False
+
+
+def _has_bleeding(
+    safety_screening: Optional[SafetyScreening],
+    summary: Optional[StructuredMedicalSummary],
+) -> bool:
+    if safety_screening and safety_screening.red_flags:
+        for f in safety_screening.red_flags:
+            txt = f"{f.symptom} {f.reason}".lower()
+            if any(b in txt for b in ["bleeding", "blood", "rathapokku", "khoon", "raktham"]):
+                return True
+    if summary:
+        for s in summary.symptoms:
+            if not s.negated:
+                txt = f"{s.name} {s.raw_text or ''}".lower()
+                if any(b in txt for b in ["bleeding", "blood", "rathapokku", "khoon", "raktham"]):
+                    return True
+    return False
+
+
+def _has_fever(
+    safety_screening: Optional[SafetyScreening],
+    summary: Optional[StructuredMedicalSummary],
+) -> bool:
+    if safety_screening and safety_screening.red_flags:
+        for f in safety_screening.red_flags:
+            txt = f"{f.symptom} {f.reason}".lower()
+            if "fever" in txt or any(k in txt for k in ["kaachal", "bukhar", "jwaram"]):
+                return True
+    if summary:
+        for s in summary.symptoms:
+            if not s.negated:
+                txt = f"{s.name} {s.raw_text or ''}".lower()
+                if "fever" in txt or any(k in txt for k in ["kaachal", "bukhar", "jwaram"]):
+                    return True
+    return False
+
+
 def determine_urgency_tier(
     level: PriorityLevel,
     emergency_override: bool = False,
     safety_screening: Optional[SafetyScreening] = None,
     score: float = 0.0,
+    patient_context: Optional[dict] = None,
+    summary: Optional[StructuredMedicalSummary] = None,
 ) -> Tuple[UrgencyTier, int]:
     """
     Map PriorityLevel and clinical safety signals to the 4 product urgency tiers:
@@ -288,12 +445,47 @@ def determine_urgency_tier(
       - self_care: Safe for home care with monitoring and 2-3 day follow-up (LOW)
     Returns: (urgency_tier, follow_up_days)
     """
+    patient_context = patient_context or {}
+
+    # 1. Critical flags or emergency override -> EMERGENCY
     if emergency_override or (safety_screening and safety_screening.has_critical_flags):
         return UrgencyTier.EMERGENCY, 0
 
-    if level == PriorityLevel.HIGH:
-        if safety_screening and any(f.severity == "critical" for f in safety_screening.red_flags):
+    if safety_screening and any(f.severity == "critical" for f in safety_screening.red_flags):
+        return UrgencyTier.EMERGENCY, 0
+
+    # 2. Chest pain with age 40+ or sweating or breathlessness -> EMERGENCY (B1.1)
+    if _has_chest_pain(safety_screening, summary, patient_context):
+        age = _parse_patient_age(patient_context.get("age"))
+        if age is not None and age >= 40:
             return UrgencyTier.EMERGENCY, 0
+        if _has_sweating(safety_screening, summary, patient_context):
+            return UrgencyTier.EMERGENCY, 0
+        if _has_breathlessness(safety_screening, summary):
+            return UrgencyTier.EMERGENCY, 0
+
+    # 3. Pregnancy with bleeding -> EMERGENCY (B1.1)
+    if _is_patient_pregnant_helper(patient_context, summary) and _has_bleeding(safety_screening, summary):
+        return UrgencyTier.EMERGENCY, 0
+
+    # 4. Pediatric fever rules (B1.1):
+    # Fever in an infant (< 1y) or child under 5 (< 5y) maps to at least DOCTOR_TODAY
+    age = _parse_patient_age(patient_context.get("age"))
+    if _has_fever(safety_screening, summary) and age is not None:
+        if age < 5:
+            return UrgencyTier.DOCTOR_TODAY, 1
+
+    # 5. Any high safety flag maps to at least DOCTOR_TODAY (B1.1)
+    # Excludes advisory-only acoustic biomarkers so they do not artificially force urgency
+    clinical_high_flags = [
+        f for f in (safety_screening.red_flags if safety_screening else [])
+        if f.severity == "high" and f.symptom != "respiratory_distress_acoustic"
+    ]
+    if clinical_high_flags:
+        return UrgencyTier.DOCTOR_TODAY, 1
+
+    # 6. PriorityLevel mapping
+    if level == PriorityLevel.HIGH:
         return UrgencyTier.DOCTOR_TODAY, 1
 
     if level == PriorityLevel.MEDIUM:
@@ -302,6 +494,13 @@ def determine_urgency_tier(
         return UrgencyTier.DOCTOR_SOON, 2
 
     if level == PriorityLevel.PENDING_REVIEW:
+        return UrgencyTier.DOCTOR_SOON, 2
+
+    # 7. Invariant (B1.7): Insufficient input or missing critical info routes to doctor, never self_care
+    if safety_screening and safety_screening.missing_critical_info:
+        return UrgencyTier.DOCTOR_SOON, 2
+
+    if summary and not any(not s.negated for s in summary.symptoms) and not (safety_screening and safety_screening.red_flags):
         return UrgencyTier.DOCTOR_SOON, 2
 
     return UrgencyTier.SELF_CARE, 3
@@ -320,7 +519,11 @@ def assess_priority(
 
    
     if safety_screening is None:
-        safety_screening = screen_safety(summary)
+        safety_screening = screen_safety(
+            summary=summary,
+            transcript_english=patient_context.get("transcript_english"),
+            transcript_original=patient_context.get("transcript_original"),
+        )
 
     # 2. Calculate fallback rule score
     rule_score = _score_summary(summary)
@@ -345,6 +548,8 @@ def assess_priority(
             emergency_override=True,
             safety_screening=safety_screening,
             score=rule_score,
+            patient_context=patient_context,
+            summary=summary,
         )
         return PriorityAssessment(
             level=PriorityLevel.HIGH,
@@ -414,6 +619,8 @@ def assess_priority(
                 emergency_override=False,
                 safety_screening=safety_screening,
                 score=rule_score,
+                patient_context=patient_context,
+                summary=summary,
             )
             return PriorityAssessment(
                 level=level,
@@ -474,6 +681,8 @@ def assess_priority(
         emergency_override=False,
         safety_screening=safety_screening,
         score=rule_score,
+        patient_context=patient_context,
+        summary=summary,
     )
     return PriorityAssessment(
         level=level,

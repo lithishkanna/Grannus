@@ -75,7 +75,10 @@ logger = logging.getLogger("rural_care.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Pre-load ML model at startup."""
+    """Verify mandatory secrets and pre-load ML model at startup."""
+    settings = get_settings()
+    if not settings.jwt_secret_key:
+        raise RuntimeError("JWT_SECRET_KEY is mandatory and not configured. Backend refusing to start.")
     try:
         model = get_model()
         if model.is_available():
@@ -545,6 +548,7 @@ async def export_fhir(
             clinical_summary=result.clinical_summary,
             safety_screening=result.safety_screening,
             priority=result.priority,
+            patient_context=getattr(result, "patient_context", None),
         )
 
         # Validate against ABDM FHIR profiles

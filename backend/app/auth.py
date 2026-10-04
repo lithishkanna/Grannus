@@ -27,7 +27,9 @@ security_bearer = HTTPBearer(auto_error=False)
 def get_signing_secret() -> str:
     """Retrieve dedicated JWT signing secret independent of external API keys."""
     settings = get_settings()
-    return settings.jwt_secret_key or "grannus_secure_jwt_signing_key_32bytes_min"
+    if not settings.jwt_secret_key:
+        raise RuntimeError("JWT_SECRET_KEY is mandatory and not configured. Backend refusing to operate.")
+    return settings.jwt_secret_key
 
 
 def hash_password(password: str) -> str:

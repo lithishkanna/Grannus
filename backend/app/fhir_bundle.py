@@ -1,6 +1,6 @@
 import datetime
 import uuid
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from app.schemas import PatientInput, ClinicalSummary, SafetyScreeningOutput, PriorityAssessment
 
@@ -11,6 +11,7 @@ def generate_fhir_bundle(
     clinical_summary: ClinicalSummary,
     safety_screening: SafetyScreeningOutput,
     priority: PriorityAssessment,
+    patient_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Generates a FHIR R4 JSON bundle from the AI extraction pipeline output.
@@ -69,6 +70,44 @@ def generate_fhir_bundle(
             }
         ]
     }
+    
+    # Demographics: gender, age, language
+    gender_val = getattr(patient_input, "gender", None) or (patient_context and patient_context.get("gender"))
+    if gender_val:
+        g = str(gender_val).lower().strip()
+        if g in ("m", "male"):
+            patient_resource["gender"] = "male"
+        elif g in ("f", "female"):
+            patient_resource["gender"] = "female"
+        else:
+            patient_resource["gender"] = "other"
+
+    age_val = getattr(patient_input, "age", None) or (patient_context and patient_context.get("age"))
+    if age_val:
+        patient_resource["extension"] = [
+            {
+                "url": "http://hl7.org/fhir/StructureDefinition/patient-age",
+                "valueString": str(age_val)
+            }
+        ]
+
+    lang_val = getattr(patient_input, "language", None) or (patient_context and patient_context.get("language"))
+    if lang_val:
+        patient_resource["communication"] = [
+            {
+                "language": {
+                    "coding": [
+                        {
+                            "system": "urn:ietf:bcp:47",
+                            "code": str(lang_val)
+                        }
+                    ],
+                    "text": str(lang_val)
+                },
+                "preferred": True
+            }
+        ]
+
     bundle["entry"].append({
         "fullUrl": f"urn:uuid:{patient_uuid}",
         "resource": patient_resource
@@ -93,7 +132,7 @@ def generate_fhir_bundle(
         "resource": encounter_resource
     })
 
-    # 3. Condition Resource (Chief Complaint)
+    # 3. Condition Resource (Chief Complaint - Problem List Item, not confirmed diagnosis)
     if clinical_summary.chief_complaint:
         condition_uuid = str(uuid.uuid4())
         condition_resource = {
@@ -112,20 +151,21 @@ def generate_fhir_bundle(
                     "coding": [
                         {
                             "system": "http://terminology.hl7.org/CodeSystem/condition-category",
-                            "code": "encounter-diagnosis"
+                            "code": "problem-list-item",
+                            "display": "Problem List Item"
                         }
                     ]
                 }
             ],
             "code": {
-                "text": clinical_summary.chief_complaint
+                "text": f"Triage complaint category: {clinical_summary.chief_complaint}"
             },
             "subject": {
                 "reference": f"urn:uuid:{patient_uuid}"
             },
             "note": [
                 {
-                    "text": "AI-extracted triage data. Not a diagnosis."
+                    "text": "AI-extracted triage complaint category. Not a confirmed diagnosis."
                 }
             ]
         }
@@ -221,5 +261,62 @@ def generate_fhir_bundle(
             "fullUrl": f"urn:uuid:{issue_uuid}",
             "resource": issue_resource
         })
+
+    # 7. MedicationStatement Resources (Patient-reported medications)
+    for med in getattr(clinical_summary, "medications", []):
+        if med and med.strip() and med.lower() not in ("none", "nil", "no", "na", "n/a"):
+            med_uuid = str(uuid.uuid4())
+            med_resource = {
+                "resourceType": "MedicationStatement",
+                "id": med_uuid,
+                "status": "active",
+                "subject": {
+                    "reference": f"urn:uuid:{patient_uuid}"
+                },
+                "medicationCodeableConcept": {
+                    "text": med.strip()
+                },
+                "note": [
+                    {
+                        "text": "Patient-reported medication during triage intake."
+                    }
+                ]
+            }
+            bundle["entry"].append({
+                "fullUrl": f"urn:uuid:{med_uuid}",
+                "resource": med_resource
+            })
+
+    # 8. AllergyIntolerance Resources (Patient-reported allergies)
+    for allergy in getattr(clinical_summary, "allergies", []):
+        if allergy and allergy.strip() and allergy.lower() not in ("none", "nil", "no", "na", "n/a"):
+            alg_uuid = str(uuid.uuid4())
+            alg_resource = {
+                "resourceType": "AllergyIntolerance",
+                "id": alg_uuid,
+                "clinicalStatus": {
+                    "coding": [
+                        {
+                            "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+                            "code": "active"
+                        }
+                    ]
+                },
+                "patient": {
+                    "reference": f"urn:uuid:{patient_uuid}"
+                },
+                "code": {
+                    "text": allergy.strip()
+                },
+                "note": [
+                    {
+                        "text": "Patient-reported allergy during triage intake."
+                    }
+                ]
+            }
+            bundle["entry"].append({
+                "fullUrl": f"urn:uuid:{alg_uuid}",
+                "resource": alg_resource
+            })
 
     return bundle

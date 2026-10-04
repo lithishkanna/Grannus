@@ -240,6 +240,9 @@ class SafetyScreening(BaseModel):
         default_factory=list,
         description="Critical safety-relevant information that is missing (e.g., breathing status when chest pain present).",
     )
+    has_chest_pain: bool = Field(default=False, description="True if non-negated chest pain is reported.")
+    has_sweating: bool = Field(default=False, description="True if non-negated sweating or diaphoresis is reported.")
+
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +284,9 @@ class PatientInput(BaseModel):
     transcript_english: str = Field(description="English translation.")
     language_confidence: Optional[float] = Field(default=None)
     language_verification_required: bool = Field(default=False)
+    age: Optional[Any] = Field(default=None, description="Patient age (years or description).")
+    gender: Optional[str] = Field(default=None, description="Patient gender ('male', 'female', 'other').")
+
 
 
 class ClinicalSummary(BaseModel):
