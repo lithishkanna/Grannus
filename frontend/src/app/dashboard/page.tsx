@@ -43,16 +43,26 @@ export default function DashboardPage() {
 
   useEffect(() => {
     try {
+      const token = localStorage.getItem('grannus_auth_token');
       const stored = localStorage.getItem('grannus_user');
-      if (stored) {
-        const u = JSON.parse(stored);
-        setCurrentUser(u);
-        if (typeof u.is_on_duty === 'boolean') {
-          setIsOnDuty(u.is_on_duty);
-        }
+      if (!token || !stored) {
+        router.push('/login?redirect=/dashboard');
+        return;
+      }
+      const u = JSON.parse(stored);
+      // F1.5 Role guard: Doctor dashboard restricted to doctors, nurses, and admins
+      if (u.role === 'patient') {
+        router.push('/input');
+        return;
+      }
+      setCurrentUser(u);
+      if (typeof u.is_on_duty === 'boolean') {
+        setIsOnDuty(u.is_on_duty);
       }
     } catch (e) {
       console.error('Failed to load user session', e);
+      router.push('/login');
+      return;
     }
 
     // Load doctor roster for reassignment

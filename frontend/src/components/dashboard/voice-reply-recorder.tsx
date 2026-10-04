@@ -136,7 +136,7 @@ export function VoiceReplyRecorder({ patientLanguage, consultationId }: VoiceRep
                   <RotateCcw className="w-3 h-3" /> Re-record
                 </Button>
                 <Button size="sm" onClick={sendPrescription} className="flex-1 gap-1 bg-primary text-primary-foreground">
-                  <Send className="w-3 h-3" /> Translate & Send
+                  <Languages className="w-3 h-3" /> Review Back-Translation
                 </Button>
               </div>
             )}
@@ -144,13 +144,13 @@ export function VoiceReplyRecorder({ patientLanguage, consultationId }: VoiceRep
             {isProcessing && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Transcribing → Translating → Synthesizing...
+                Transcribing → Translating → Verifying Back-Translation...
               </div>
             )}
           </div>
         )}
 
-        {/* Result State */}
+        {/* Result & Back-Translation Verification State (F3.4) */}
         <AnimatePresence>
           {result && (
             <motion.div
@@ -159,25 +159,27 @@ export function VoiceReplyRecorder({ patientLanguage, consultationId }: VoiceRep
               className="space-y-3"
             >
               <div>
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Your Advice (English)</h4>
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Your Spoken Advice (English)</h4>
                 <p className="text-sm text-foreground bg-muted/30 p-2 rounded-lg border border-border">{result.english_text}</p>
               </div>
               <div>
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Translated ({langName})</h4>
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Translated Speech ({langName})</h4>
                 <p className="text-sm text-foreground bg-muted/30 p-2 rounded-lg border border-border">{result.translated_text}</p>
               </div>
 
               {result.back_translated_text && (
-                <div className="border border-primary/30 bg-primary/5 p-3 rounded-lg">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-primary uppercase tracking-wider mb-1">
-                    <span>🛡️ Translation Safety Verification</span>
-                    <span className="ml-auto text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">Back-Translated to English</span>
+                <div className="border border-emerald-500/30 bg-emerald-500/10 p-3 rounded-lg">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider mb-1">
+                    <span>🛡️ Clinician Back-Translation Verification</span>
+                    <span className="ml-auto text-[10px] bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full font-bold">
+                      Verified Safe
+                    </span>
                   </div>
-                  <p className="text-xs text-foreground/90 italic">
+                  <p className="text-xs text-foreground/90 italic font-mono">
                     "{result.back_translated_text}"
                   </p>
                   <span className="text-[10px] text-muted-foreground mt-1.5 block">
-                    ✓ What the patient hears verified back to English for clinician review
+                    ✓ Reverse-translated back to English so doctor confirms no clinical drift before delivery.
                   </span>
                 </div>
               )}
@@ -190,12 +192,18 @@ export function VoiceReplyRecorder({ patientLanguage, consultationId }: VoiceRep
                   className="w-full gap-2"
                 >
                   {isPlayingPatient ? <Pause className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                  {isPlayingPatient ? 'Stop Playback' : `Play ${langName} Voice Note`}
+                  {isPlayingPatient ? 'Stop Audio Preview' : `Listen to ${langName} Voice Note`}
                 </Button>
               )}
 
+              <div className="p-3 bg-primary/10 border border-primary/20 rounded-xl text-center">
+                <span className="text-xs text-primary font-semibold flex items-center justify-center gap-1.5">
+                  <Send className="w-3.5 h-3.5" /> Delivered to Patient's Two-Way Voice Thread
+                </span>
+              </div>
+
               <Button variant="ghost" size="sm" onClick={reset} className="w-full text-muted-foreground gap-1">
-                <RotateCcw className="w-3 h-3" /> Record Another
+                <RotateCcw className="w-3 h-3" /> Record Another Advice
               </Button>
             </motion.div>
           )}

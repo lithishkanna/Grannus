@@ -1,6 +1,11 @@
 'use client';
 import { useState, useCallback, useRef } from 'react';
-import { processAudio as apiProcessAudio, PipelineResult } from '@/lib/api';
+import {
+  processAudio as apiProcessAudio,
+  submitAudioAsync,
+  getJobStatus,
+  PipelineResult,
+} from '@/lib/api';
 import { storeResultToSupabase } from '@/lib/store-result';
 
 export const PIPELINE_STAGES = [
@@ -22,18 +27,25 @@ export function usePipeline() {
   const [consultationId, setConsultationId] = useState<string | null>(null);
   const inFlightRef = useRef(false);
 
-  const simulateStages = useCallback(async () => {
-    let active = true;
-    for (const stage of PIPELINE_STAGES) {
-      if (!active) break;
-      setCurrentStage(stage.id);
-      setStageProgress(prev => ({ ...prev, [stage.id]: 'active' }));
-      
-      if (stage.id !== 'storing') {
-         await new Promise(resolve => setTimeout(resolve, stage.duration));
-         setStageProgress(prev => ({ ...prev, [stage.id]: 'complete' }));
+  const applyStageTransition = useCallback((activeStageId: string) => {
+    setCurrentStage(activeStageId);
+    setStageProgress((prev) => {
+      const next: Record<string, 'pending' | 'active' | 'complete' | 'error'> = { ...prev };
+      let foundActive = false;
+      for (const stage of PIPELINE_STAGES) {
+        if (stage.id === activeStageId) {
+          next[stage.id] = 'active';
+          foundActive = true;
+        } else if (!foundActive) {
+          next[stage.id] = 'complete';
+        } else {
+          if (next[stage.id] !== 'complete') {
+            next[stage.id] = 'pending';
+          }
+        }
       }
-    }
+      return next;
+    });
   }, []);
 
   const processAudio = useCallback(async (params: {
@@ -61,43 +73,84 @@ export function usePipeline() {
     setStageProgress(initialProgress);
 
     try {
-      // Start fake stage simulation visually
-      simulateStages();
+      applyStageTransition('audio_preprocessing');
 
-      // Actually call backend
-      const res = await apiProcessAudio(params);
-      
-      // Fast forward to storing if it finishes early
-      setCurrentStage('storing');
-      setStageProgress(prev => {
+      // Attempt F1.4 real asynchronous job processing with stage-by-stage status polling
+      let finalResult: PipelineResult | null = null;
+
+      try {
+        const submission = await submitAudioAsync(params);
+        if (submission && submission.job_id) {
+          const jobId = submission.job_id;
+          let jobCompleted = false;
+          let attempts = 0;
+          const maxAttempts = 90; // up to ~72 seconds
+
+          while (!jobCompleted && attempts < maxAttempts) {
+            await new Promise((r) => setTimeout(r, 800));
+            attempts++;
+
+            const statusRes = await getJobStatus(jobId);
+            const status = statusRes?.status;
+
+            if (status === 'PREPROCESSING') {
+              applyStageTransition('audio_preprocessing');
+            } else if (status === 'TRANSCRIBING') {
+              applyStageTransition('speech_to_text');
+            } else if (status === 'EXTRACTING') {
+              applyStageTransition('medical_extraction');
+            } else if (status === 'TRIAGING') {
+              applyStageTransition('safety_screening');
+            } else if (status === 'COMPLETED') {
+              applyStageTransition('storing');
+              finalResult = statusRes.result;
+              jobCompleted = true;
+              break;
+            } else if (status === 'FAILED') {
+              throw new Error(statusRes.error || 'Triage job processing failed');
+            }
+          }
+
+          if (!jobCompleted && !finalResult) {
+            throw new Error('Pipeline job timed out; falling back to synchronous execution');
+          }
+        }
+      } catch (asyncErr: any) {
+        console.warn('Async job polling unavailable or timed out; executing fallback:', asyncErr);
+      }
+
+      // Synchronous fallback if async did not complete
+      if (!finalResult) {
+        applyStageTransition('medical_extraction');
+        finalResult = await apiProcessAudio(params);
+      }
+
+      applyStageTransition('storing');
+      const cid = await storeResultToSupabase(finalResult);
+      setConsultationId(cid || finalResult.request_id);
+      setResult(finalResult);
+      setStageProgress((prev) => {
         const next = { ...prev };
-        PIPELINE_STAGES.forEach(s => {
-          if (s.id !== 'storing') next[s.id] = 'complete';
+        PIPELINE_STAGES.forEach((s) => {
+          next[s.id] = 'complete';
         });
-        next['storing'] = 'active';
         return next;
       });
-
-      const cid = await storeResultToSupabase(res);
-      setConsultationId(cid);
-      setResult(res);
-      setStageProgress(prev => ({ ...prev, storing: 'complete' }));
-      
     } catch (err: any) {
-      console.error(err);
+      console.error('Pipeline error:', err);
       setError(err.message || 'Pipeline processing failed');
-      setStageProgress(prev => {
-         const next = { ...prev };
-         Object.keys(next).forEach(k => {
-            if (next[k] === 'active') next[k] = 'error';
-         });
-         return next;
+      setStageProgress((prev) => {
+        const next = { ...prev };
+        Object.keys(next).forEach((k) => {
+          if (next[k] === 'active') next[k] = 'error';
+        });
+        return next;
       });
     } finally {
       setIsProcessing(false);
       inFlightRef.current = false;
     }
-  }, [simulateStages]);
+  }, [applyStageTransition]);
 
   const reset = useCallback(() => {
     inFlightRef.current = false;

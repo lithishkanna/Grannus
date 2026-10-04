@@ -11,6 +11,8 @@ import { HomeRemedy } from '@/components/results/home-remedy';
 import { AcousticBiomarkerCard } from '@/components/results/acoustic-biomarker-card';
 import { EmergencyScreen } from '@/components/results/emergency-screen';
 import { FollowUpCard } from '@/components/results/follow-up-card';
+import { HospitalVisitCard } from '@/components/results/hospital-visit-card';
+import { VoiceThreadViewer } from '@/components/results/voice-thread-viewer';
 import { FhirExportButton } from '@/components/dashboard/fhir-export-button';
 import { VoiceReplyRecorder } from '@/components/dashboard/voice-reply-recorder';
 import { Button } from '@/components/ui/button';
@@ -135,8 +137,21 @@ function ResultsContent() {
           />
         </motion.section>
 
-        {/* Doctor Voice Reply to Patient */}
+        {/* Asynchronous Two-Way Voice Thread (F2.8) */}
+        <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.13 }}>
+          <VoiceThreadViewer
+            consultationId={id || result.request_id}
+            patientLanguage={patient_input.language || 'ta-IN'}
+          />
+        </motion.section>
+
+        {/* Official Hospital Visit Card (F2.9) */}
         <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.14 }}>
+          <HospitalVisitCard />
+        </motion.section>
+
+        {/* Doctor Voice Reply to Patient */}
+        <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.15 }}>
           <VoiceReplyRecorder 
             patientLanguage={patient_input.language || 'hi-IN'} 
             consultationId={id || undefined} 
