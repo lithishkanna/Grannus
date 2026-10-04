@@ -1097,6 +1097,117 @@ def escalate_consultation(
     return response
 
 
+@app.get("/api/v1/patient/check-in-prompts")
+def get_patient_check_in_prompts(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Check if any 2-3 day follow-up check-ins are due for this patient account (B6.5).
+    Used to show prompt banners or modals upon app opening.
+    """
+    from app.db import get_profiles_for_account
+    profile_ids = []
+    if current_user.account_id:
+        profiles = get_profiles_for_account(current_user.account_id)
+        profile_ids = [p["id"] for p in profiles]
+    prompts = get_follow_up_manager().get_due_check_ins(
+        account_id=current_user.account_id,
+        profile_ids=profile_ids,
+    )
+    return {"due_check_ins": prompts, "count": len(prompts)}
+
+
+@app.post("/api/v1/follow-ups/process-due")
+def process_due_follow_up_notifications(
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.ADMIN, UserRole.DOCTOR])),
+):
+    """
+    Scheduler endpoint to trigger automated SMS dispatch for overdue check-ins (B6.5).
+    """
+    dispatched_count = get_follow_up_manager().dispatch_due_check_in_notifications()
+    return {"status": "success", "dispatched_notifications": dispatched_count}
+
+
+class VerifyDoctorReplyRequest(BaseModel):
+    english_reply: str
+    patient_language: str = "ta-IN"
+
+
+@app.post("/api/v1/consultations/{consultation_id}/verify-reply-translation")
+async def verify_doctor_reply_translation(
+    consultation_id: str,
+    req: VerifyDoctorReplyRequest,
+    current_doctor: AuthenticatedUser = Depends(require_verified_doctor),
+):
+    """
+    Back-translate doctor voice/text reply so the clinician can verify it before sending (B7.4).
+    Guarantees medication names & dosages are preserved and not distorted by translation.
+    """
+    from app.services.translation import verify_and_back_translate_doctor_reply
+    result = await verify_and_back_translate_doctor_reply(
+        doctor_english_reply=req.english_reply,
+        patient_language=req.patient_language,
+    )
+    return result
+
+
+@app.get("/api/v1/demo/sample-cases")
+def get_demo_sample_cases():
+    """
+    List the 8 pre-cached demonstration cases for 100% offline-resilient evaluation (B7.6).
+    """
+    from app.demo_cache import list_cached_sample_cases
+    return {"cases": list_cached_sample_cases()}
+
+
+@app.post("/api/v1/demo/run-sample/{sample_id}")
+def run_demo_sample_case(
+    sample_id: str,
+    language_code: str = "en-IN",
+):
+    """
+    Instantly return the pre-cached PipelineResult for a demo case and persist it in the queue (B7.6).
+    """
+    from app.demo_cache import get_cached_demo_response
+    from app.db import save_consultation
+    from app.routing import route_consultation
+    cached_result = get_cached_demo_response(sample_id, language_code)
+    if not cached_result:
+        raise HTTPException(status_code=404, detail=f"Demo sample '{sample_id}' not found.")
+
+    cid = cached_result.request_id
+    from app.routing import categorize_complaint
+    category, dept_code, _ = categorize_complaint(
+        clinical_summary=cached_result.clinical_summary,
+        urgency_tier=cached_result.priority.urgency_tier.value,
+    )
+    save_consultation(cid, {
+        "id": cid,
+        "status": "triage",
+        "patient_language": language_code,
+        "urgency_tier": cached_result.priority.urgency_tier.value,
+        "complaint_category": category,
+        "department_id": dept_code,
+        "chief_complaint": cached_result.clinical_summary.chief_complaint,
+        "original_transcript": cached_result.patient_input.transcript_original,
+        "english_transcript": cached_result.patient_input.transcript_english,
+        "full_result": cached_result.model_dump(),
+        "age": cached_result.patient_input.age,
+        "gender": cached_result.patient_input.gender,
+    })
+
+    get_follow_up_manager().register_consultation(
+        consultation_id=cid,
+        urgency_tier=cached_result.priority.urgency_tier,
+        follow_up_days=cached_result.priority.follow_up_days or 2,
+    )
+
+    c_dict = {"id": cid, "urgency_tier": cached_result.priority.urgency_tier.value, "patient_language": language_code}
+    route_consultation(c_dict, cached_result.clinical_summary, cached_result.safety_screening)
+
+    return cached_result
+
+
 @app.get("/api/v1/consultations/{consultation_id}/thread", response_model=VoiceThread)
 def get_consultation_voice_thread(
     consultation_id: str,

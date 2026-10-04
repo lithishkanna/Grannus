@@ -220,3 +220,87 @@ def _matches_specialty(specialty: str, dept_code: str) -> bool:
     if dept_code == "GEN_MED" and ("general" in s or "medicine" in s or "derma" in s or "ortho" in s or "ent" in s):
         return True
     return False
+
+
+def route_consultation(
+    consultation_data: dict,
+    clinical_summary: Any = None,
+    safety_screening: Any = None,
+) -> dict:
+    """
+    Route consultation according to B5.3 specifications:
+      1. Emergency: immediate ER alert / no queue.
+      2. Categorize complaint by symptoms to department.
+      3. Match on-duty doctor who speaks patient's language with lowest caseload.
+      4. Fall back to department -> General Medicine -> Duty Doctor.
+    """
+    from app.db import get_staff_doctors, save_consultation, save_assignment, append_audit_log_entry
+
+    urgency_tier = consultation_data.get("urgency_tier", "doctor_soon")
+    patient_lang = consultation_data.get("patient_language", "en-IN")
+    cid = consultation_data.get("id", "")
+
+    category, dept_code, rationale = categorize_complaint(
+        clinical_summary=clinical_summary,
+        patient_context={
+            "age": consultation_data.get("age"),
+            "gender": consultation_data.get("gender"),
+        },
+        safety_screening=safety_screening,
+        urgency_tier=urgency_tier,
+    )
+
+    consultation_data["complaint_category"] = category
+    consultation_data["department_id"] = dept_code
+
+    if urgency_tier == "emergency":
+        consultation_data["assigned_doctor_id"] = None
+        save_consultation(cid, consultation_data)
+        append_audit_log_entry(
+            action="EMERGENCY_ER_ALERT_DISPATCHED",
+            user_id="system_router",
+            role="system",
+            resource_id=cid,
+            details={
+                "urgency_tier": "emergency",
+                "department": "EMERGENCY",
+                "rationale": rationale,
+            },
+        )
+        return consultation_data
+
+    # Roster match for doctor_today / doctor_soon
+    doctors = get_staff_doctors()
+    best_doc, match_reason = select_best_doctor(doctors, dept_code, patient_lang)
+
+    if best_doc:
+        doc_id = best_doc.get("id")
+        doc_name = best_doc.get("full_name", doc_id)
+        consultation_data["assigned_doctor_id"] = doc_id
+        save_consultation(cid, consultation_data)
+        save_assignment(
+            consultation_id=cid,
+            doctor_id=doc_id,
+            assigned_by="system_router",
+            status="assigned",
+            locked_by_name=doc_name,
+            reassignment_reason=f"{rationale} {match_reason}",
+        )
+        append_audit_log_entry(
+            action="CONSULTATION_AUTO_ROUTED",
+            user_id="system_router",
+            role="system",
+            resource_id=cid,
+            details={
+                "assigned_doctor_id": doc_id,
+                "assigned_doctor_name": doc_name,
+                "department": dept_code,
+                "urgency_tier": urgency_tier,
+                "match_reason": match_reason,
+            },
+        )
+    else:
+        save_consultation(cid, consultation_data)
+
+    return consultation_data
+

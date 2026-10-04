@@ -230,6 +230,18 @@ class FollowUpManager:
             consultation_id, previous_tier.value, new_tier.value, escalation_reason
         )
 
+        # B6.7 Invariant: 'I feel worse' moves the case up one tier AND re-routes it!
+        try:
+            from app.db import get_consultation, save_consultation
+            from app.routing import route_consultation
+            consultation = get_consultation(consultation_id)
+            if consultation:
+                consultation["urgency_tier"] = new_tier.value
+                route_consultation(consultation)
+                logger.info("Consultation %s re-routed following tier escalation to %s", consultation_id, new_tier.value)
+        except Exception as re_err:
+            logger.error("Failed to re-route consultation %s on escalation: %s", consultation_id, re_err)
+
         return CheckInResponse(
             consultation_id=consultation_id,
             previous_tier=previous_tier,
@@ -242,6 +254,82 @@ class FollowUpManager:
             next_follow_up_days=next_days,
         )
 
+    def get_due_check_ins(self, account_id: Optional[str] = None, profile_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """
+        Retrieve all consultations whose 2-3 day follow-up check-in is due (B6.5).
+        Used by the frontend to render check-in notification prompts on next login/app open.
+        """
+        now = time.time()
+        prompts = []
+
+        # Check in-memory records
+        for cid, record in self._records.items():
+            if record.follow_up_due_at <= now and not record.is_escalated:
+                has_checked_in = any(ch.get("status") in ("improving", "same", "worse") for ch in record.check_in_history)
+                if not has_checked_in:
+                    prompts.append({
+                        "consultation_id": cid,
+                        "profile_id": record.patient_id,
+                        "urgency_tier": record.current_tier.value,
+                        "due_since": int(now - record.follow_up_due_at),
+                        "prompt_message": "It has been 2-3 days since your consultation. How are your symptoms progressing?",
+                    })
+
+        # Check DB persistent follow-ups
+        try:
+            from app.db import get_supabase_client, _MEM_FOLLOW_UPS
+            client = get_supabase_client()
+            db_records = []
+            if client:
+                query = client.table("persistent_follow_ups").select("*").eq("status", "PENDING")
+                if profile_ids:
+                    query = query.in_("profile_id", profile_ids)
+                res = query.execute()
+                if res.data:
+                    db_records = res.data
+            if not db_records:
+                db_records = [fu for fu in _MEM_FOLLOW_UPS.values() if fu.get("status") == "PENDING"]
+                if profile_ids:
+                    db_records = [fu for fu in db_records if fu.get("profile_id") in profile_ids]
+
+            for fu in db_records:
+                cid = fu.get("consultation_id")
+                if not any(p["consultation_id"] == cid for p in prompts):
+                    prompts.append({
+                        "consultation_id": cid,
+                        "profile_id": fu.get("profile_id"),
+                        "urgency_tier": fu.get("urgency_tier", "self_care"),
+                        "due_since": 0,
+                        "prompt_message": "It has been 2-3 days since your consultation. How are your symptoms progressing?",
+                    })
+        except Exception as e:
+            logger.warning("Error fetching persistent follow-ups: %s", e)
+
+        return prompts
+
+    def dispatch_due_check_in_notifications(self) -> int:
+        """
+        Simulate automated SMS / notification dispatch for due check-ins (B6.5).
+        """
+        prompts = self.get_due_check_ins()
+        count = 0
+        from app.db import append_audit_log_entry
+        for p in prompts:
+            append_audit_log_entry(
+                action="CHECK_IN_SMS_DISPATCHED",
+                user_id="scheduler_service",
+                role="system",
+                resource_id=p["consultation_id"],
+                details={
+                    "tier": p["urgency_tier"],
+                    "profile_id": p.get("profile_id"),
+                    "notification_channel": "SMS",
+                    "template": "Grannus RuralCare AI: It has been 2 days since your consultation. Please tap here to let us know if your symptoms are improving or worsening.",
+                },
+            )
+            count += 1
+        return count
+
 
 _follow_up_manager: Optional[FollowUpManager] = None
 
@@ -251,3 +339,4 @@ def get_follow_up_manager() -> FollowUpManager:
     if _follow_up_manager is None:
         _follow_up_manager = FollowUpManager()
     return _follow_up_manager
+

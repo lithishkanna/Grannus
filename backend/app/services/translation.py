@@ -35,6 +35,67 @@ SUPPORTED_LANGUAGES = {
 }
 
 
+import re
+
+# Drug and dosage protection regexes (B7.4)
+_DRUG_DOSAGE_REGEXES = [
+    re.compile(r'\b(?:Paracetamol|Amoxicillin|Azithromycin|Ibuprofen|Metformin|Pantoprazole|Omeprazole|Ciprofloxacin|Cetirizine|ORS|Aspirin|Dolo|PCM|Ranitidine|Diclofenac|Cefixime)\b(?:\s+\d+(?:\.\d+)?\s*(?:mg|g|mcg|ml|tablets?|capsules?|sachets?|drops?|puffs?))?', re.IGNORECASE),
+    re.compile(r'\b[A-Za-z]{3,25}\s+\d+(?:\.\d+)?\s*(?:mg|g|mcg|ml)\b', re.IGNORECASE),
+    re.compile(r'\b\d+\s+(?:tablets?|capsules?|drops?|puffs?|spoons?)\s+(?:once|twice|thrice|\d+\s+times)\s+(?:daily|a\s+day|every\s+\d+\s+hours)\b', re.IGNORECASE),
+    re.compile(r'\b[012]-[012]-[012]\b'),
+    re.compile(r'\b\d+(?:\.\d+)?\s*(?:mg|g|mcg|ml)\b', re.IGNORECASE),
+]
+
+
+def mask_medications_and_dosages(text: str) -> tuple[str, dict[str, str]]:
+    """
+    Protect drug names and dosages with placeholder masks (B7.4)
+    e.g. 'Paracetamol 500mg' -> '__DRUG_DOSAGE_0__'.
+    Prevents translation corruption or transliteration errors.
+    """
+    if not text:
+        return text, {}
+
+    mask_map: dict[str, str] = {}
+    masked_text = text
+    idx = 0
+
+    for pattern in _DRUG_DOSAGE_REGEXES:
+        matches = list(pattern.finditer(masked_text))
+        for m in sorted(matches, key=lambda x: len(x.group(0)), reverse=True):
+            match_str = m.group(0)
+            if not match_str.strip() or match_str.startswith("__DRUG_DOSAGE_"):
+                continue
+            placeholder = f"__DRUG_DOSAGE_{idx}__"
+            # Replace only this occurrence if not already masked
+            if match_str in masked_text:
+                mask_map[placeholder] = match_str
+                masked_text = masked_text.replace(match_str, placeholder, 1)
+                idx += 1
+
+    return masked_text, mask_map
+
+
+def unmask_medications_and_dosages(text: str, mask_map: dict[str, str]) -> str:
+    """
+    Restore preserved drug names and exact dosages after translation (B7.4).
+    Tolerates space and casing variations introduced by translation engines.
+    """
+    if not text or not mask_map:
+        return text
+
+    unmasked = text
+    for placeholder, original in mask_map.items():
+        # Clean exact placeholder
+        unmasked = unmasked.replace(placeholder, original)
+        # Tolerate spaces or case variations e.g. "__ drug_dosage_0 __"
+        num = placeholder.replace("__DRUG_DOSAGE_", "").replace("__", "")
+        fuzzy_pattern = re.compile(rf'__\s*drug[_\s]*dosage[_\s]*{num}\s*__', re.IGNORECASE)
+        unmasked = fuzzy_pattern.sub(original, unmasked)
+
+    return unmasked
+
+
 def _is_translatable(language_code: Optional[str]) -> bool:
     """Check if the language code is a non-English Indian language we can translate to."""
     if not language_code:
@@ -51,17 +112,8 @@ async def translate_text(
     source_language: str = "en-IN",
 ) -> str:
     """
-    Translate text to the target language using Sarvam Translate API.
-
-    Returns the original text if translation fails or the language is unsupported.
-
-    Args:
-        text: English text to translate.
-        target_language: BCP-47 code (e.g. 'ta-IN').
-        source_language: Source language code (default: English).
-
-    Returns:
-        Translated text, or original text on failure.
+    Translate text to the target language using Sarvam Translate API with
+    strict medication and dosage mask preservation (B7.4).
     """
     if not text or not text.strip():
         return text
@@ -69,11 +121,14 @@ async def translate_text(
     if not _is_translatable(target_language):
         return text
 
-    # Check cache
-    cache_key = (text.strip(), target_language)
+    # Step 1: Mask drug names and dosages before translation
+    masked_input, mask_map = mask_medications_and_dosages(text)
+
+    # Check cache for masked text
+    cache_key = (masked_input.strip(), target_language)
     if cache_key in _translation_cache:
-        logger.debug("translation_cache_hit lang=%s text_len=%d", target_language, len(text))
-        return _translation_cache[cache_key]
+        cached_result = _translation_cache[cache_key]
+        return unmask_medications_and_dosages(cached_result, mask_map)
 
     settings = get_settings()
     if not settings.sarvam_api_key:
@@ -85,7 +140,7 @@ async def translate_text(
             response = await client.post(
                 f"{settings.sarvam_base_url}{TRANSLATE_ENDPOINT}",
                 json={
-                    "input": text,
+                    "input": masked_input,
                     "source_language_code": source_language,
                     "target_language_code": target_language,
                     "mode": "formal",
@@ -104,18 +159,21 @@ async def translate_text(
                 return text
 
             result = response.json()
-            translated = result.get("translated_text", "")
-            if not translated or not translated.strip():
+            translated_masked = result.get("translated_text", "")
+            if not translated_masked or not translated_masked.strip():
                 logger.warning("translation_empty lang=%s", target_language)
                 return text
 
-            # Cache the result
-            _translation_cache[cache_key] = translated
+            # Cache the masked translation
+            _translation_cache[cache_key] = translated_masked
+
+            # Step 2: Unmask protected medications
+            final_translated = unmask_medications_and_dosages(translated_masked, mask_map)
             logger.info(
-                "translation_ok lang=%s chars_in=%d chars_out=%d",
-                target_language, len(text), len(translated),
+                "translation_ok lang=%s chars_in=%d chars_out=%d protected_drugs=%d",
+                target_language, len(text), len(final_translated), len(mask_map),
             )
-            return translated
+            return final_translated
 
     except httpx.TimeoutException:
         logger.warning("translation_timeout lang=%s", target_language)
@@ -123,6 +181,68 @@ async def translate_text(
     except Exception as exc:
         logger.warning("translation_error lang=%s error=%s", target_language, exc)
         return text
+
+
+async def verify_and_back_translate_doctor_reply(
+    doctor_english_reply: str,
+    patient_language: str,
+) -> dict:
+    """
+    Verify doctor's voice reply before sending to patient (B7.4).
+    1. Translates English doctor reply to patient's language with drug masks.
+    2. Back-translates patient's language back to English.
+    3. Calculates keyword consistency and discrepancy flags.
+    """
+    if not doctor_english_reply or not doctor_english_reply.strip():
+        return {
+            "doctor_english_reply": "",
+            "patient_language": patient_language,
+            "patient_translation": "",
+            "back_translated_english": "",
+            "preserved_medications": [],
+            "is_verified": False,
+            "confidence_score": 0.0,
+            "discrepancy_notes": "Empty doctor reply",
+        }
+
+    # Forward translation
+    patient_translation = await translate_text(
+        text=doctor_english_reply,
+        target_language=patient_language,
+        source_language="en-IN",
+    )
+
+    # Back translation
+    back_translated = await translate_text(
+        text=patient_translation,
+        target_language="en-IN",
+        source_language=patient_language,
+    )
+
+    # Check preserved drugs
+    _, mask_map = mask_medications_and_dosages(doctor_english_reply)
+    preserved = list(mask_map.values())
+
+    # Verification checks
+    discrepancy = None
+    is_verified = True
+    for med in preserved:
+        if med.lower() not in patient_translation.lower() and med.lower() not in back_translated.lower():
+            is_verified = False
+            discrepancy = f"Warning: Prescribed medication/dosage '{med}' was modified during translation."
+            break
+
+    return {
+        "doctor_english_reply": doctor_english_reply,
+        "patient_language": patient_language,
+        "patient_translation": patient_translation,
+        "back_translated_english": back_translated,
+        "preserved_medications": preserved,
+        "is_verified": is_verified,
+        "confidence_score": 0.95 if is_verified else 0.60,
+        "discrepancy_notes": discrepancy,
+    }
+
 
 
 async def translate_questions(

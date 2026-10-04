@@ -110,6 +110,17 @@ def _hash_otp(otp_code: str, salt: str = "grannus_otp_salt_2026") -> str:
     return hashlib.sha256(f"{otp_code}:{salt}".encode("utf-8")).hexdigest()
 
 
+def _safe_uuid_or_none(val: Any) -> Optional[str]:
+    if not val:
+        return None
+    val_str = str(val).strip()
+    try:
+        uuid.UUID(val_str)
+        return val_str
+    except (ValueError, AttributeError):
+        return None
+
+
 # -----------------------------------------------------------------------------
 # Hospital & Department Operations (B3.2)
 # -----------------------------------------------------------------------------
@@ -937,8 +948,8 @@ def save_consultation(consultation_id: str, data: dict) -> dict:
         "status": data.get("status", "triage"),
         "patient_language": data.get("patient_language", "en-IN"),
         "urgency_tier": data.get("urgency_tier", "doctor_soon"),
-        "department_id": data.get("department_id"),
-        "assigned_doctor_id": data.get("assigned_doctor_id"),
+        "department_id": _safe_uuid_or_none(data.get("department_id")),
+        "assigned_doctor_id": _safe_uuid_or_none(data.get("assigned_doctor_id")),
         "original_transcript": data.get("original_transcript", ""),
         "english_transcript": data.get("english_transcript", ""),
         "audio_url": data.get("audio_url", ""),

@@ -20,14 +20,15 @@ class Settings(BaseSettings):
 
     # --- Sarvam AI ---
     sarvam_api_key: str = ""
-    sarvam_stt_model: str = "saaras:v3"  # "saaras:v3" or "saaras:v4"
+    sarvam_stt_model: str = "saaras:v2"  # "saaras:v2" or "saaras:v3"
     sarvam_base_url: str = "https://api.sarvam.ai"
     sarvam_retry_attempts: int = 3
     sarvam_timeout_seconds: float = 30.0
 
     # --- Gemini ---
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.6-flash"
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_fallback_model: str = "gemini-1.5-flash"
     gemini_retry_attempts: int = 3
     gemini_timeout_seconds: float = 60.0
 

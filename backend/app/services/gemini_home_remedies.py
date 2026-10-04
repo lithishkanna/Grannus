@@ -135,102 +135,32 @@ async def generate_home_remedies(
 ) -> Optional[HomeRemedyGuidance]:
     """
     Generate safe self-care guidance for a LOW priority patient.
+    Enforces B6.2 invariant: strictly uses approved library entries or fixed
+    demonstration fallback. Never allows free-form unvetted AI medical generation.
 
     Args:
-        summary: The patient's clinical summary from Gemini extraction.
-        patient_language: BCP-47 code for the patient's language (for translation).
+        summary: The patient's clinical summary from extraction.
+        patient_language: BCP-47 code for the patient's language.
 
     Returns:
-        HomeRemedyGuidance populated with care steps, monitoring signs, and
-        seek-doctor triggers (with translations if patient_language != English).
-        Returns None if generation fails (pipeline continues without guidance).
+        HomeRemedyGuidance populated with approved care steps, monitoring signs,
+        and seek-doctor triggers.
     """
-    # 1. First consult our vetted, clinician-approved home remedy library
-    from app.remedy_library import get_approved_home_remedy_guidance
+    from app.remedy_library import get_approved_home_remedy_guidance, get_default_home_remedy_guidance
+
+    # 1. First consult our approved demonstration self-care library
     approved = get_approved_home_remedy_guidance(summary, patient_language)
     if approved:
-        logger.info("Matched clinical approved home remedy library entry for symptoms")
-        return approved
+        logger.info("Matched approved self-care library entry for symptoms")
+        guidance = approved
+    else:
+        # 2. Strict B6.2 invariant: If no approved entry matches, return fixed approved message:
+        # "Please consult a doctor", with explicit emergency criteria.
+        logger.info("No approved home remedy match; returning standard clinician consultation guidance")
+        guidance = get_default_home_remedy_guidance(patient_language)
 
-    settings = get_settings()
-    client = _get_gemini_client()
-    prompt = _build_home_remedy_prompt(summary)
-
-    def _call_gemini():
-        return client.models.generate_content(
-            model=settings.gemini_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=_HOME_REMEDY_SYSTEM_INSTRUCTION,
-                response_mime_type="application/json",
-                response_schema=_HomeRemedyRaw,
-                temperature=0.2,  # slightly more flexible than extraction, still conservative
-            ),
-        )
-
-    response = None
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(_call_gemini),
-                timeout=settings.gemini_timeout_seconds,
-            )
-            break
-        except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
-            if attempt < max_attempts - 1:
-                logger.warning("Network error calling Gemini for home remedies: %s. Retry %d/%d", e, attempt + 1, max_attempts)
-                await asyncio.sleep(2 ** attempt)
-            else:
-                logger.error("Home remedy generation failed after %d attempts: %s", max_attempts, e)
-                return None
-        except genai_errors.APIError as e:
-            if getattr(e, "code", None) in (429, 500, 503) or "quota" in str(e).lower():
-                if attempt < max_attempts - 1:
-                    logger.warning("Transient Gemini API error for home remedies: %s. Retry %d/%d", e, attempt + 1, max_attempts)
-                    await asyncio.sleep(2 ** attempt)
-                else:
-                    logger.error("Home remedy generation failed: %s", e)
-                    return None
-            else:
-                logger.error("Permanent Gemini API error for home remedies: %s", e)
-                return None
-        except Exception as e:
-            if attempt < max_attempts - 1:
-                logger.warning("Unexpected error in home remedy generation: %s. Retry %d/%d", e, attempt + 1, max_attempts)
-                await asyncio.sleep(2 ** attempt)
-            else:
-                logger.error("Home remedy generation failed unexpectedly: %s", e)
-                return None
-
-    if response is None:
-        return None
-
-    # Parse and validate Gemini response
-    guidance: Optional[HomeRemedyGuidance] = None
-    try:
-        parsed = response.parsed
-        if parsed is None:
-            guidance = HomeRemedyGuidance.model_validate_json(response.text)
-        elif isinstance(parsed, HomeRemedyGuidance):
-            guidance = parsed
-        else:
-            guidance = HomeRemedyGuidance.model_validate(parsed)
-    except (ValidationError, Exception) as e:
-        logger.warning("Home remedy response validation failed: %s. Returning None.", e)
-        return None
-
-    # Ensure mandatory disclaimer is always present
-    if not guidance.disclaimer:
-        guidance.disclaimer = (
-            "This is general health information only, not a medical diagnosis or treatment plan. "
-            "If symptoms worsen or you are concerned, please seek medical attention immediately."
-        )
-
-    guidance.language = patient_language
-
-    # Translate care steps and seek-doctor triggers to patient language if needed
-    if not patient_language.lower().startswith("en"):
+    # 3. If translation to non-English is missing, translate only the approved text
+    if not patient_language.lower().startswith("en") and not guidance.translated_care_steps:
         care_texts = [step.step for step in guidance.care_steps]
         seek_texts = guidance.seek_doctor_if
 
@@ -252,14 +182,14 @@ async def generate_home_remedies(
             guidance.translated_care_steps = translated_care
             guidance.translated_seek_doctor_if = translated_seek
         except Exception as e:
-            logger.warning("Translation of home remedy guidance failed: %s", e)
-            # Non-critical — guidance is still returned in English
+            logger.warning("Translation of approved guidance failed: %s", e)
 
     logger.info(
-        "home_remedies_generated steps=%d monitoring=%d seek_triggers=%d lang=%s",
+        "home_remedies_served steps=%d monitoring=%d seek_triggers=%d lang=%s",
         len(guidance.care_steps),
         len(guidance.monitoring_signs),
         len(guidance.seek_doctor_if),
         patient_language,
     )
     return guidance
+

@@ -383,6 +383,146 @@ APPROVED_REMEDY_LIBRARY: Dict[str, ApprovedRemedy] = {
             },
         },
     ),
+    "mild_leg_pain": ApprovedRemedy(
+        remedy_id="mild_leg_pain",
+        title="Mild Leg & Calf Muscle Strain Care",
+        symptom_keywords=[
+            "leg pain", "calf pain", "thigh pain", "muscle cramp", "tired legs", "aching legs",
+            "கால் வலி", "கால் தசைப்பிடிப்பு", "தசை வலி",
+            "टांगों में दर्द", "पैर दर्द", "पिंडलियों में दर्द", "मांसपेशियों में खिंचाव",
+            "కాలి నొప్పి", "కాళ్ల నొప్పులు", "పిక్కల నొప్పి",
+        ],
+        care_steps=[
+            "Rest the affected leg and avoid prolonged standing, brisk walking, or heavy lifting for 24 to 48 hours.",
+            "Keep the leg gently elevated on a cushion or folded pillow while sitting or sleeping to reduce muscle congestion.",
+            "Apply a cold compress (ice wrapped in a clean cloth) for 15 minutes twice daily to relieve acute muscle strain.",
+            "Drink plenty of clean water and oral fluids to avoid dehydration-related muscle cramps.",
+            "Perform very gentle calf and ankle stretching once acute soreness begins to ease.",
+        ],
+        monitoring_signs=[
+            "Increasing swelling, noticeable warmth, or redness developing in one calf or leg.",
+            "Pain persisting despite 48 hours of rest and elevation.",
+        ],
+        seek_doctor_if=[
+            "Sudden swelling, intense heat, or redness in one calf (warning sign of deep vein thrombosis).",
+            "Inability to bear weight or take even a few steps on the leg.",
+            "Severe pain following a direct fall, twist, or trauma to the knee or leg.",
+            "Leg pain accompanied by chest pain, shortness of breath, or coughing up blood (call 108 emergency immediately).",
+            "Cold, pale, or bluish foot or loss of sensation in the leg.",
+        ],
+        translations={
+            "ta-IN": {
+                "care_steps": [
+                    "24 முதல் 48 மணி நேரம் நீண்ட நேரம் நிற்பது அல்லது நடப்பதை தவிர்த்து காலுக்கு ஓய்வு அளிக்கவும்.",
+                    "படுக்கும்போது அல்லது அமரும்போது காலை தலையணையின் மீது லேசாக உயர்த்தி வைக்கவும்.",
+                    "தசை வலி உள்ள பகுதியில் சுத்தமான துணியில் சுற்றிய ஐஸ் கட்டியால் 15 நிமிடங்கள் ஒத்தடம் கொடுக்கவும்.",
+                    "தசைப்பிடிப்பு வராமல் இருக்க போதுமான அளவு சுத்தமான குடிநீர் பருகவும்.",
+                ],
+                "seek_doctor_if": [
+                    "ஒரு காலில் மட்டும் திடீர் வீக்கம், அதீத சூடு அல்லது சிவந்து போதல் இருந்தால்.",
+                    "காலில் நின்றோ நடந்தோ எடை தாங்க முடியாமல் போனால்.",
+                    "கால் வலியுடன் நெஞ்சு வலி, மூச்சுத்திணறல் அல்லது இருமலில் ரத்தம் வந்தால் உடனே 108 அழைக்கவும்.",
+                    "கால் மரத்துப்போவது அல்லது பாதத்தில் குளிர்ச்சி ஏற்பட்டால் உடனே மருத்துவரை அணுகவும்.",
+                ],
+            },
+            "hi-IN": {
+                "care_steps": [
+                    "24 से 48 घंटे तक पैरों को आराम दें और ज्यादा देर तक खड़े रहने या भारी काम करने से बचें।",
+                    "बैठते या सोते समय पैर के नीचे तकिया रखकर उसे हल्का ऊंचा रखें।",
+                    "दर्द वाली जगह पर कपड़े में लपेटकर बर्फ से 15 मिनट हल्की सिकाई करें।",
+                    "मांसपेशियों में ऐंठन से बचने के लिए भरपूर पानी और तरल पदार्थ पिएं।",
+                ],
+                "seek_doctor_if": [
+                    "किसी एक पैर या पिंडली में अचानक सूजन, अत्यधिक गर्माहट या लालिमा आना।",
+                    "पैर पर बिल्कुल वजन न दे पाना या चलने में असमर्थ होना।",
+                    "पैर दर्द के साथ सीने में दर्द, सांस लेने में तकलीफ या खांसी में खून आना (तुरंत 108 पर कॉल करें)।",
+                    "पैर या पंजे का ठंडा पड़ना या सुन्न हो जाना।",
+                ],
+            },
+            "te-IN": {
+                "care_steps": [
+                    "ఎక్కువ సేపు నిలబడకుండా 24-48 గంటలు కాళ్లకు తగినంత విశ్రాంతి ఇవ్వండి.",
+                    "పడుకునేటప్పుడు లేదా కూర్చునేటప్పుడు కాళ్ల కింద దిండు పెట్టుకుని కొద్దిగా ఎత్తుగా ఉంచండి.",
+                    "నొప్పి ఉన్న ప్రదేశంలో శుభ్రమైన గుడ్డలో మంచుగడ్డ చుట్టి 15 నిమిషాలు కాపడం పెట్టండి.",
+                    "కండరాల నొప్పులు రాకుండా ఉండటానికి తగినంత మంచినీరు తాగండి.",
+                ],
+                "seek_doctor_if": [
+                    "ఒక కాలి పిక్కలో అకస్మాత్తుగా వాపు, తీవ్రమైన వేడి లేదా ఎరుపు రావడం.",
+                    "కాలుపై అస్సలు నిలబడలేకపోవడం లేదా నడవలేకపోవడం.",
+                    "కాలి నొప్పితో పాటు ఛాతీ నొప్పి లేదా శ్వాస తీసుకోవడంలో ఇబ్బంది ఉండటం (వెంటనే 108 కు కాల్ చేయండి).",
+                    "కాలు లేదా పాదం చల్లబడిపోవడం లేదా తిమ్మిరి రావడం.",
+                ],
+            },
+        },
+    ),
+    "mild_hair_loss": ApprovedRemedy(
+        remedy_id="mild_hair_loss",
+        title="General Scalp & Mild Hair Fall Self-Care",
+        symptom_keywords=[
+            "hair loss", "hair fall", "thinning hair", "dandruff", "scalp itch", "falling hair",
+            "முடி உதிர்தல்", "முடி கொட்டுதல்", "பொடுகு", "தலையில் அரிப்பு",
+            "बाल झड़ना", "बाल गिरना", "रूसी", "सिर में खुजली", "बालों का पतला होना",
+            "జుట్టు రాలడం", "తల దురద", "చుండ్రు",
+        ],
+        care_steps=[
+            "Wash hair gently using clean room-temperature or lukewarm water; avoid very hot water.",
+            "Avoid tight hairstyles, vigorous towel rubbing, and harsh chemical treatments or heat dryers.",
+            "Eat a balanced diet rich in natural protein, iron, and green leafy vegetables (spinach, lentils, eggs, nuts).",
+            "Gently massage the scalp with clean pure coconut or sesame oil for 5 to 10 minutes once or twice weekly.",
+            "Ensure 7 to 8 hours of adequate sleep and manage everyday stress levels.",
+        ],
+        monitoring_signs=[
+            "Noticeable clumps of hair falling out daily exceeding normal shedding.",
+            "Mild itching, scaling, or burning sensation across the scalp.",
+        ],
+        seek_doctor_if=[
+            "Sudden, patchy hair loss causing distinct smooth round bald spots (alopecia areata).",
+            "Severe scalp redness, persistent pain, oozing, crusting, or pus discharge.",
+            "Hair fall accompanied by unexplained weight changes, chronic fatigue, cold intolerance, or irregular menstrual cycles.",
+            "Rapid, widespread hair shedding starting after beginning new systemic medications.",
+        ],
+        translations={
+            "ta-IN": {
+                "care_steps": [
+                    "தலைமுடியை அதிக சூடான நீரில் கழுவாமல், வெதுவெதுப்பான அல்லது குளிர்ந்த நீரில் மென்மையாக அலசவும்.",
+                    "தலைமுடியை இறுக்கமாக கட்டுவதையோ, துண்டால் வேகமாக தேய்ப்பதையோ தவிர்க்கவும்.",
+                    "கீரை, பருப்பு வகைகள், முட்டை போன்ற புரதம் மற்றும் இரும்புச்சத்து நிறைந்த உணவுகளை அதிகம் உண்ணவும்.",
+                    "வாரத்திற்கு இருமுறை சுத்தமான தேங்காய் எண்ணெயால் தலையில் மென்மையாக மசாஜ் செய்யவும்.",
+                ],
+                "seek_doctor_if": [
+                    "திடீரென வட்ட வடிவில் வழுக்கை போன்ற திட்டுகள் தோன்றினால்.",
+                    "தலையில் அதிக சிவத்தல், கொப்பளங்கள், சீழ் அல்லது தாங்க முடியாத அரிப்பு இருந்தால்.",
+                    "முடி கொட்டுதலுடன் உடல் எடை குறைவு, தீவிர சோர்வு அல்லது மாதவிடாய் பிரச்சனைகள் இருந்தால் மருத்துவரை அணுகவும்.",
+                ],
+            },
+            "hi-IN": {
+                "care_steps": [
+                    "बालों को बहुत गर्म पानी से न धोएं, ताजे या हल्के गुनगुने पानी से धीरे-धीरे धोएं।",
+                    "बालों को जोर से तौलिए से न रगड़ें और कसकर बांधने से बचें।",
+                    "हरी पत्तेदार सब्जियां, दालें और पोषण युक्त संतुलित आहार लें।",
+                    "सप्ताह में 1-2 बार शुद्ध नारियल तेल से सिर की हल्की मालिश करें।",
+                ],
+                "seek_doctor_if": [
+                    "अचानक सिर में गोल सिक्के जैसे गंजेपन के चकत्ते (पैच) दिखना।",
+                    "सिर की त्वचा पर अत्यधिक लाली, पपड़ी, दाने या मवाद आना।",
+                    "बाल झड़ने के साथ अचानक वजन बदलना, अत्यधिक थकान या कमजोरी महसूस होना।",
+                ],
+            },
+            "te-IN": {
+                "care_steps": [
+                    "తలస్నానానికి వేడి నీళ్లకు బదులుగా గోరువెచ్చని లేదా చల్లని నీటిని ఉపయోగించండి.",
+                    "జుట్టును టవల్‌తో గట్టిగా రుద్దకండి మరియు బిగుతుగా ముడి వేయకండి.",
+                    "ఆకుకూరలు, పప్పుధాన్యాలు వంటి పోషక విలువలున్న ఆహారం తీసుకోండి.",
+                    "వారానికి ఒకసారి లేదా రెండుసార్లు కొబ్బరి నూనెతో తలకు సున్నితంగా మర్దన చేయండి.",
+                ],
+                "seek_doctor_if": [
+                    "తలమీద అకస్మాత్తుగా గుండ్రని మచ్చలుగా జుట్టు రాలిపోవడం.",
+                    "తల చర్మంపై తీవ్రమైన ఎరుపు, కురుపులు లేదా చీము పట్టడం.",
+                    "జుట్టు రాలడంతో పాటు విపరీతమైన అలసట లేదా బరువు తగ్గడం గమనిస్తే వెంటనే వైద్యుడిని సంప్రదించండి.",
+                ],
+            },
+        },
+    ),
 }
 
 
@@ -401,12 +541,115 @@ def find_approved_remedy(symptom_names: List[str], chief_complaint: str = "") ->
     return None
 
 
+def get_default_home_remedy_guidance(patient_language: Optional[str] = "en-IN") -> HomeRemedyGuidance:
+    """
+    Fixed approved clinical fallback when no specific home remedy matches (B6.2).
+    Never hallucinates unverified advice; guides patient to consult a doctor.
+    """
+    lang_code = patient_language or "en-IN"
+    lang_key = lang_code if lang_code in ("ta-IN", "hi-IN", "te-IN") else (
+        "ta-IN" if "ta" in lang_code.lower() else (
+            "hi-IN" if "hi" in lang_code.lower() else (
+                "te-IN" if "te" in lang_code.lower() else "en-IN"
+            )
+        )
+    )
+
+    base_care_steps = [
+        "Please consult a healthcare professional at your local Primary Health Centre (PHC) for a clinical evaluation of your symptoms.",
+        "Take adequate physical rest in a well-ventilated, quiet room and avoid strenuous labor or heavy lifting.",
+        "Stay well hydrated by drinking clean boiled and cooled water, light buttermilk, or oral fluids.",
+        "Do not consume unprescribed medications, antibiotics, or unverified remedies without a clinician's advice.",
+    ]
+
+    base_monitoring = [
+        "Symptoms increasing in severity or not easing after 24 to 48 hours of rest.",
+        "Onset of persistent nausea or difficulty keeping food or fluids down.",
+        "New symptoms such as dizziness, high fever, or unexpected swelling.",
+    ]
+
+    base_seek_doctor = [
+        "Any difficulty breathing, shortness of breath, or chest heaviness.",
+        "High continuous fever above 101°F that does not respond to rest.",
+        "Any active bleeding (coughing up blood, blood in vomit, stool, or vaginal bleeding).",
+        "Severe continuous pain or inability to drink liquids and stay hydrated.",
+        "Sudden worsening of symptoms — immediately call 108 or 112 emergency services.",
+    ]
+
+    translations = {
+        "ta-IN": {
+            "care_steps": [
+                "உங்கள் அறிகுறிகளுக்கு தகுந்த பரிசோதனை பெற அருகிலுள்ள அரசு ஆரம்ப சுகாதார நிலைய (PHC) மருத்துவரை அணுகவும்.",
+                "கடினமான வேலைகளை தவிர்த்து காற்றோட்டமான அறையில் போதுமான ஓய்வு எடுக்கவும்.",
+                "காய்ச்சி ஆறிய சுத்தமான தண்ணீர் மற்றும் மோர் போன்ற நீர் ஆகாரங்களை அதிகம் பருகவும்.",
+                "மருத்துவர் பரிந்துரைக்காத மாத்திரைகளையோ அல்லது ஆண்டிபயாடிக்குகளையோ சுயமாக உட்கொள்ள வேண்டாம்.",
+            ],
+            "seek_doctor_if": [
+                "மூச்சுத்திணறல், மூச்சு விடுவதில் சிரமம் அல்லது நெஞ்சு பாரம் ஏற்பட்டால்.",
+                "101°F க்கு மேல் தொடர் காய்ச்சல் இருந்தால்.",
+                "எந்தவொரு ரத்தப்போக்கும் (இருமலில், வாந்தியில், மலத்தில்) ஏற்பட்டால் உடனே மருத்துவமனைக்கு செல்லவும்.",
+                "அறிகுறிகள் திடீரென தீவிரமடைந்தால் உடனடியாக 108 அவசர ஆம்புலன்ஸை அழைக்கவும்.",
+            ],
+        },
+        "hi-IN": {
+            "care_steps": [
+                "अपने लक्षणों की जांच के लिए नजदीकी प्राथमिक स्वास्थ्य केंद्र (PHC) के चिकित्सक से परामर्श करें।",
+                "हवादार कमरे में पर्याप्त आराम करें और भारी शारीरिक श्रम से बचें।",
+                "उबला और ठंडा किया गया साफ पानी व तरल पदार्थ भरपूर मात्रा में पिएं।",
+                "डॉक्टर की सलाह के बिना कोई भी दवा या एंटीबायोटिक खुद से न लें।",
+            ],
+            "seek_doctor_if": [
+                "सांस लेने में कोई भी तकलीफ या सीने में भारीपन होना।",
+                "101°F से अधिक तेज बुखार जो आराम करने पर भी न उतरे।",
+                "किसी भी प्रकार का रक्तस्राव (उल्टी, मल, खांसी में खून आना)।",
+                "लक्षणों के अचानक बिगड़ने पर तुरंत 108 या 112 आपातकालीन सेवा पर कॉल करें।",
+            ],
+        },
+        "te-IN": {
+            "care_steps": [
+                "మీ లక్షణాల సరైన పరీక్ష కోసం స్థానిక ప్రాథమిక ఆరోగ్య కేంద్రం (PHC) వైద్యుడిని సంప్రదించండి.",
+                "గాలి వెలుతురు ఉన్న గదిలో తగినంత విశ్రాంతి తీసుకోండి మరియు కష్టమైన పనులు చేయకండి.",
+                "కాచి చల్లార్చిన మంచినీరు, మజ్జిగ వంటి ద్రవాలను ఎక్కువగా తాగండి.",
+                "వైద్యుడి సలహా లేకుండా ఎలాంటి మందులు లేదా యాంటీబయాటిక్స్ సొంతంగా తీసుకోకండి.",
+            ],
+            "seek_doctor_if": [
+                "శ్వాస తీసుకోవడంలో ఇబ్బంది లేదా ఛాతీలో బరువుగా ఉండటం.",
+                "101°F కంటే ఎక్కువ తీవ్ర జ్వరం తగ్గకపోవడం.",
+                "వాంతుల్లో, మలంలో లేదా దగ్గులో రక్తం పడటం.",
+                "పరిస్థితి విషమిస్తే వెంటనే 108 లేదా 112 అత్యవసర సేవలకు కాల్ చేయండి.",
+            ],
+        },
+    }
+
+    trans_steps = translations.get(lang_key, {}).get("care_steps")
+    trans_seek = translations.get(lang_key, {}).get("seek_doctor_if")
+
+    care_objects = []
+    for i, step in enumerate(base_care_steps):
+        t_step = trans_steps[i] if (trans_steps and i < len(trans_steps)) else None
+        care_objects.append(HomeRemedyCareStep(step=step, translated_step=t_step))
+
+    return HomeRemedyGuidance(
+        care_steps=care_objects,
+        monitoring_signs=base_monitoring,
+        seek_doctor_if=base_seek_doctor,
+        translated_care_steps=trans_steps,
+        translated_seek_doctor_if=trans_seek,
+        language=patient_language,
+        disclaimer=(
+            "Approved self-care information (demonstration). "
+            "This information is for mild, self-limiting symptoms only and does not replace medical consultation. "
+            "If any warning signs appear, please seek medical care or call 108 immediately."
+        ),
+    )
+
+
 def get_approved_home_remedy_guidance(
     summary: Any,
     patient_language: Optional[str] = "en-IN",
 ) -> Optional[HomeRemedyGuidance]:
     """
-    Construct validated HomeRemedyGuidance strictly from the approved clinical library.
+    Construct validated HomeRemedyGuidance strictly from the approved self-care library.
     Includes translated care steps and 'seek doctor if' triggers for the patient.
     """
     non_negated_symptoms = [s.name for s in getattr(summary, "symptoms", []) if not getattr(s, "negated", False)]
@@ -445,8 +688,9 @@ def get_approved_home_remedy_guidance(
         translated_seek_doctor_if=translated_seek_doctor,
         language=patient_language,
         disclaimer=(
-            "Vetted self-care guidance from the Grannus Approved Clinical Library. "
+            "Approved self-care information (demonstration). "
             "This information is for mild, self-limiting symptoms only and does not replace medical consultation. "
             "If any warning signs appear, please seek medical care or call 108 immediately."
         ),
     )
+
