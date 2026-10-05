@@ -183,10 +183,10 @@ def request_phone_otp(phone: str) -> Tuple[bool, str, Optional[str]]:
     phone_norm = normalize_phone(phone)
     now = time.time()
 
-    # Cooldown check
+    # Cooldown check (30 seconds per H1.2)
     last_req = _OTP_COOLDOWNS.get(phone_norm, 0)
-    if now - last_req < 60:
-        remaining = int(60 - (now - last_req))
+    if now - last_req < 30:
+        remaining = int(30 - (now - last_req))
         return False, f"Please wait {remaining} seconds before requesting a new code.", None
 
     _OTP_COOLDOWNS[phone_norm] = now
@@ -197,7 +197,8 @@ def request_phone_otp(phone: str) -> Tuple[bool, str, Optional[str]]:
     else:
         otp_code = f"{random.randint(100000, 999999):06d}"
 
-    otp_hash = _hash_otp(otp_code)
+    otp_salt = uuid.uuid4().hex
+    otp_hash = _hash_otp(otp_code, salt=otp_salt)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     otp_id = str(uuid.uuid4())
 
@@ -205,6 +206,7 @@ def request_phone_otp(phone: str) -> Tuple[bool, str, Optional[str]]:
         "id": otp_id,
         "phone_number": phone_norm,
         "otp_hash": otp_hash,
+        "otp_salt": otp_salt,
         "attempts": 0,
         "max_attempts": 5,
         "expires_at": expires_at.isoformat(),
@@ -280,9 +282,10 @@ def verify_phone_otp(phone: str, otp_code: str) -> Tuple[bool, str, Optional[dic
     if latest_record["expires_at"] < now_iso:
         return False, "Verification code has expired. Please request a new code.", None
 
-    # Check hash
+    # Check hash with per-OTP salt
     expected_hash = latest_record["otp_hash"]
-    given_hash = _hash_otp(code_clean)
+    salt = latest_record.get("otp_salt", "grannus_otp_salt_2026")
+    given_hash = _hash_otp(code_clean, salt=salt)
 
     if not hmac.compare_digest(given_hash, expected_hash):
         latest_record["attempts"] += 1

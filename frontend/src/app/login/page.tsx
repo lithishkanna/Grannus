@@ -20,6 +20,8 @@ import {
   ArrowRight,
   RefreshCw,
   KeyRound,
+  AlertTriangle,
+  PhoneCall,
 } from 'lucide-react';
 import {
   requestPhoneOtp,
@@ -28,6 +30,7 @@ import {
   getPatientProfiles,
   createPatientProfile,
   setActiveProfile,
+  guestEmergencyIntake,
   PatientProfile,
 } from '@/lib/api';
 
@@ -83,6 +86,32 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+
+  // Emergency access state (H1.3)
+  const [showEmergencyModal, setShowEmergencyModal] = useState(false);
+  const [guestName, setGuestName] = useState('');
+  const [guestAge, setGuestAge] = useState('');
+  const [isEmergencyLoading, setIsEmergencyLoading] = useState(false);
+
+  const handleGuestEmergency = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsEmergencyLoading(true);
+    setErrorMessage('');
+    try {
+      const res = await guestEmergencyIntake({
+        guest_name: guestName.trim() || 'Emergency Patient',
+        age: guestAge.trim() || undefined,
+      });
+      setSuccessMessage('Emergency intake registered. Connecting to emergency protocol...');
+      setTimeout(() => {
+        router.push(`/results?id=${res.case_id}`);
+      }, 400);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Could not register emergency intake.');
+    } finally {
+      setIsEmergencyLoading(false);
+    }
+  };
 
   // Cooldown countdown timer
   useEffect(() => {
@@ -473,9 +502,103 @@ export default function LoginPage() {
                     </>
                   )}
                 </div>
+              ) : showEmergencyModal ? (
+                /* Emergency Guest Intake Modal (H1.3) */
+                <form onSubmit={handleGuestEmergency} className="space-y-4 animate-gentle-fade-in">
+                  <div className="p-4 rounded-xl bg-destructive/15 border border-destructive/30 text-destructive space-y-2">
+                    <div className="flex items-center gap-2 font-bold text-sm">
+                      <AlertTriangle className="w-5 h-5 text-destructive shrink-0" />
+                      <span>Immediate Emergency Protocol (108 / 112)</span>
+                    </div>
+                    <p className="text-xs text-foreground/80 leading-relaxed">
+                      For chest pain, difficulty breathing, heavy bleeding, or severe trauma, call ambulance emergency services immediately.
+                    </p>
+                    <div className="flex gap-2 pt-1">
+                      <a
+                        href="tel:108"
+                        className="flex-1 inline-flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-destructive text-destructive-foreground font-bold text-xs shadow-sm hover:opacity-90 transition-opacity"
+                      >
+                        <PhoneCall className="w-3.5 h-3.5" />
+                        Call 108 (Ambulance)
+                      </a>
+                      <a
+                        href="tel:112"
+                        className="flex-1 inline-flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-destructive text-destructive-foreground font-bold text-xs shadow-sm hover:opacity-90 transition-opacity"
+                      >
+                        <PhoneCall className="w-3.5 h-3.5" />
+                        Call 112 (National ER)
+                      </a>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 pt-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Patient Name (Required)</Label>
+                      <Input
+                        placeholder="e.g. Anbarasan or Family Member"
+                        value={guestName}
+                        onChange={(e) => setGuestName(e.target.value)}
+                        required
+                        className="h-9"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Age (Optional)</Label>
+                      <Input
+                        placeholder="e.g. 55"
+                        value={guestAge}
+                        onChange={(e) => setGuestAge(e.target.value)}
+                        className="h-9"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pt-2">
+                    <Button
+                      type="submit"
+                      variant="destructive"
+                      disabled={isEmergencyLoading}
+                      className="w-full font-semibold text-xs h-10 gap-2"
+                    >
+                      {isEmergencyLoading ? 'Alerting Hospital Casualty...' : 'Dispatch ER Alert & View Nearest Hospital'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setShowEmergencyModal(false)}
+                      className="w-full text-xs text-muted-foreground h-9"
+                    >
+                      Cancel — Back to Normal Sign In
+                    </Button>
+                  </div>
+                </form>
               ) : !otpSent ? (
                 /* Step 1: Phone Input */
-                <form onSubmit={handleRequestOtp} className="space-y-4">
+                <div className="space-y-4">
+                  {/* Emergency Access Banner (H1.3) */}
+                  <div className="p-3.5 rounded-xl bg-destructive/10 border border-destructive/25 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shrink-0">
+                        <AlertTriangle className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-destructive">Medical Emergency?</p>
+                        <p className="text-[11px] text-muted-foreground">Skip OTP to trigger hospital ER assistance.</p>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setShowEmergencyModal(true)}
+                      className="text-xs font-bold shrink-0 h-8 gap-1.5"
+                    >
+                      <PhoneCall className="w-3.5 h-3.5" />
+                      Call 108
+                    </Button>
+                  </div>
+
+                  <form onSubmit={handleRequestOtp} className="space-y-4">
                   <div className="space-y-2">
                     <Label>Mobile Phone Number</Label>
                     <div className="relative">
@@ -511,6 +634,7 @@ export default function LoginPage() {
                     <ArrowRight className="w-4 h-4" />
                   </Button>
                 </form>
+              </div>
               ) : (
                 /* Step 2: OTP Verification */
                 <form onSubmit={handleVerifyOtp} className="space-y-4">

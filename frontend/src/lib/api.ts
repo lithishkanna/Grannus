@@ -644,6 +644,46 @@ export async function verifyPhoneOtp(phoneNumber: string, otpCode: string): Prom
   return data;
 }
 
+export interface GuestEmergencyResponse {
+  success: boolean;
+  guest_token: string;
+  case_id: string;
+  message: string;
+  emergency_contact: string;
+}
+
+/**
+ * Instant emergency intake bypass without requiring OTP (H1.3).
+ */
+export async function guestEmergencyIntake(params: {
+  guest_name: string;
+  age?: string;
+  gender?: string;
+}): Promise<GuestEmergencyResponse> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/auth/guest-emergency`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Emergency intake request failed.');
+  }
+
+  const data: GuestEmergencyResponse = await res.json();
+  setAuthToken(data.guest_token);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('grannus_user', JSON.stringify({
+      user_id: `guest_${data.case_id}`,
+      role: 'guest_emergency',
+      full_name: params.guest_name || 'Emergency Patient',
+    }));
+  }
+  return data;
+}
+
 /**
  * Staff login with email and password (doctors, nurses, admins).
  */

@@ -392,10 +392,12 @@ def test_abdm_fhir_r4_bundle_validation():
 
 def test_auth_login_endpoint():
     # Valid doctor login
+    # Valid doctor login with credentials (H1.1)
     res = client.post("/api/v1/auth/login", json={
-        "user_id": "doc_rajan",
+        "email": "dr.rajan@hospital.in",
+        "password": "grannus_secure_doctor_2026",
         "role": "doctor",
-        "doctor_registration_number": "TNMC-54321",
+        "doctor_registration_number": "TNMC-48291",
         "state_medical_council": "Tamil Nadu Medical Council",
     })
     assert res.status_code == 200
@@ -404,13 +406,13 @@ def test_auth_login_endpoint():
     assert data["role"] == "doctor"
     assert data["is_verified_doctor"] is True
 
-    # Doctor login with invalid registration rejected
+    # Doctor login without password rejected (H1.1)
     res_bad = client.post("/api/v1/auth/login", json={
         "user_id": "fake_doc",
         "role": "doctor",
         "doctor_registration_number": "BAD",
     })
-    assert res_bad.status_code == 400
+    assert res_bad.status_code == 401
 
 
 def test_consent_api_endpoints():

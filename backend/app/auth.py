@@ -79,16 +79,15 @@ _REGISTERED_USERS: Dict[str, Dict[str, Any]] = {
 def authenticate_credentials(user_id: str, role: "UserRole", password: Optional[str] = None) -> bool:
     """
     Authenticate user credentials against password registry.
-    If the user has a registered password, verification is enforced.
+    Requires an explicit registered account and valid password.
+    Legacy open login bypass is deleted (H1.1).
     """
+    if not password:
+        return False
     if user_id in _REGISTERED_USERS:
         reg_info = _REGISTERED_USERS[user_id]
-        if password:
-            return verify_password(password, reg_info["password_hash"])
-        return False
-    if password is not None:
-        return len(password.strip()) >= 6
-    return True
+        return verify_password(password, reg_info["password_hash"])
+    return False
 
 
 class UserRole(str, Enum):
@@ -97,6 +96,7 @@ class UserRole(str, Enum):
     NURSE = "nurse"
     ADMIN = "admin"
     ASHA_WORKER = "asha_worker"
+    GUEST_EMERGENCY = "guest_emergency"
 
 
 class AuthenticatedUser(BaseModel):
@@ -110,6 +110,8 @@ class AuthenticatedUser(BaseModel):
     account_id: Optional[str] = None
     profile_id: Optional[str] = None
     hospital_id: Optional[str] = None
+    guest_case_id: Optional[str] = None
+    guest_token: Optional[str] = None
 
 
 # NMC / State Medical Council registration format (e.g. "MCI-41982", "TN-67890", "123456", "DEMO-NMC-GENMED-01")
@@ -147,6 +149,8 @@ def create_token(
     profile_id: Optional[str] = None,
     hospital_id: Optional[str] = None,
     is_verified_doctor: Optional[bool] = None,
+    guest_case_id: Optional[str] = None,
+    guest_token: Optional[str] = None,
     expires_in_seconds: int = 86400,
 ) -> str:
     """
@@ -170,6 +174,8 @@ def create_token(
         "account_id": account_id,
         "profile_id": profile_id,
         "hospital_id": hospital_id,
+        "guest_case_id": guest_case_id,
+        "guest_token": guest_token,
         "iat": int(time.time()),
         "exp": int(time.time()) + expires_in_seconds,
     }
@@ -218,6 +224,8 @@ def verify_token(token: str) -> AuthenticatedUser:
             account_id=payload.get("account_id"),
             profile_id=payload.get("profile_id"),
             hospital_id=payload.get("hospital_id"),
+            guest_case_id=payload.get("guest_case_id"),
+            guest_token=payload.get("guest_token"),
         )
     except Exception:
         raise HTTPException(

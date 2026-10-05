@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()  # populate os.environ from .env before Settings() reads it
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import time
 import uuid
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Depends, status, Security
@@ -177,12 +178,26 @@ class OTPRequest(BaseModel):
 class OTPRequestResponse(BaseModel):
     success: bool
     message: str
-    dev_otp_hint: Optional[str] = None
 
 
 class OTPVerifyRequest(BaseModel):
     phone_number: str
     otp_code: str
+
+
+class GuestEmergencyRequest(BaseModel):
+    guest_name: str
+    age: Optional[str] = None
+    gender: Optional[str] = None
+    language_code: Optional[str] = "en-IN"
+
+
+class GuestEmergencyResponse(BaseModel):
+    success: bool
+    guest_token: str
+    case_id: str
+    message: str
+    emergency_contact: str = "108 / 112"
 
 
 class LoginRequest(BaseModel):
@@ -232,11 +247,12 @@ class ErasureRequest(BaseModel):
 @app.post("/api/v1/auth/otp/request", response_model=OTPRequestResponse)
 def request_phone_otp_endpoint(req: OTPRequest):
     """
-    Request 6-digit phone OTP for patient authentication (B2.2).
-    Enforces 60-second cooldown and 5-minute single-use expiration.
+    Request 6-digit phone OTP for patient authentication (B2.2, H1.2).
+    Enforces cooldown and 5-minute single-use expiration.
+    Codes never appear in API responses, logs, or error payloads.
     """
     from app.db import request_phone_otp
-    success, message, dev_hint = request_phone_otp(req.phone_number)
+    success, message, _ = request_phone_otp(req.phone_number)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -245,7 +261,6 @@ def request_phone_otp_endpoint(req: OTPRequest):
     return OTPRequestResponse(
         success=True,
         message=message,
-        dev_otp_hint=dev_hint,
     )
 
 
@@ -328,22 +343,25 @@ async def login(req: LoginRequest):
         full_name = staff.get("full_name")
         hospital_id = staff.get("hospital_id")
     else:
-        if "@" in identifier:
+        if not req.password:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="No staff account found for this email address.",
+                detail="Password is required for staff account authentication.",
             )
-        role = req.role or UserRole.PATIENT
-        user_id = identifier
-        doc_reg = req.doctor_registration_number
-        state_council = req.state_medical_council
-        full_name = None
-        hospital_id = None
-
-        if not authenticate_credentials(user_id, role, req.password):
+        from app.auth import _REGISTERED_USERS
+        if identifier in _REGISTERED_USERS and authenticate_credentials(identifier, req.role or UserRole.DOCTOR, req.password):
+            reg = _REGISTERED_USERS[identifier]
+            role = UserRole(reg["role"])
+            user_id = identifier
+            doc_reg = reg.get("doctor_reg_no") or req.doctor_registration_number
+            state_council = reg.get("state_council") or req.state_medical_council
+            full_name = identifier
+            hospital_id = "c5b971d1-fe39-40bf-a5cb-539f1a98059f"
+            is_verified_doc = True
+        else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials. Please verify your user ID and password.",
+                detail="Invalid credentials. Unregistered staff account.",
             )
 
     is_verified_doc = None
@@ -390,6 +408,89 @@ async def login(req: LoginRequest):
     )
 
 
+@app.post("/api/v1/auth/guest-emergency", response_model=GuestEmergencyResponse)
+def guest_emergency_intake(req: GuestEmergencyRequest):
+    """
+    Emergency access without OTP (H1.3).
+    Instant 'Call 108' triage screen appears on client, and the backend generates
+    a secure single-case guest token alerting the hospital ER.
+    """
+    clean_name = req.guest_name.strip()
+    if len(clean_name) < 2:
+        clean_name = "Emergency Patient"
+
+    case_id = f"emg_{uuid.uuid4().hex[:12]}"
+    guest_id = f"guest_{uuid.uuid4().hex[:12]}"
+
+    token = create_token(
+        user_id=guest_id,
+        role=UserRole.GUEST_EMERGENCY,
+        guest_case_id=case_id,
+        guest_token=guest_id,
+        expires_in_seconds=7200,  # 2 hours
+    )
+
+    from app.db import save_consultation
+    save_consultation(case_id, {
+        "id": case_id,
+        "patient_id": guest_id,
+        "urgency_tier": "emergency",
+        "status": "emergency_unverified",
+        "chief_complaint": f"Emergency Guest Walk-in / Intake: {clean_name}",
+        "patient_language": req.language_code or "en-IN",
+        "department_id": "GEN_MED",
+        "is_guest_emergency": True,
+        "guest_name": clean_name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    get_audit_logger().log(
+        action="GUEST_EMERGENCY_INTAKE",
+        user_id=guest_id,
+        role="guest_emergency",
+        consultation_id=case_id,
+        details={"name": clean_name, "age": req.age, "gender": req.gender},
+    )
+
+    return GuestEmergencyResponse(
+        success=True,
+        guest_token=token,
+        case_id=case_id,
+        message="Emergency intake recorded. Hospital ER alerted. Dial 108 or 112 immediately.",
+        emergency_contact="108 / 112",
+    )
+
+
+@app.post("/api/v1/auth/refresh", response_model=LoginResponse)
+def refresh_session_token(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """
+    Renew active session token (H1.4).
+    """
+    new_token = create_token(
+        user_id=current_user.user_id,
+        role=current_user.role,
+        doctor_reg_no=current_user.doctor_registration_number,
+        state_council=current_user.state_medical_council,
+        phone_number=current_user.phone_number,
+        account_id=current_user.account_id,
+        profile_id=current_user.profile_id,
+        hospital_id=current_user.hospital_id,
+        is_verified_doctor=current_user.is_verified_doctor,
+        guest_case_id=current_user.guest_case_id,
+        guest_token=current_user.guest_token,
+        expires_in_seconds=86400,
+    )
+    return LoginResponse(
+        token=new_token,
+        user_id=current_user.user_id,
+        role=current_user.role,
+        is_verified_doctor=current_user.is_verified_doctor,
+        doctor_registration_number=current_user.doctor_registration_number,
+        phone_number=current_user.phone_number,
+        account_id=current_user.account_id,
+    )
+
+
 @app.post("/api/v1/auth/logout")
 async def logout(
     current_user: AuthenticatedUser = Depends(get_current_user),
@@ -419,6 +520,11 @@ async def list_patient_profiles(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """List all patient profiles linked to authenticated phone account (B4.1)."""
+    if current_user.role == UserRole.GUEST_EMERGENCY:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Guest emergency sessions cannot browse patient profiles.",
+        )
     from app.db import get_profiles_for_account
     if not current_user.account_id:
         return []
@@ -434,6 +540,11 @@ async def list_patient_consultations(
     List all clinical intake reports and consultations for the authenticated patient (B4.2).
     Optionally filters by specific patient family profile.
     """
+    if current_user.role == UserRole.GUEST_EMERGENCY:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Guest emergency sessions cannot browse historical consultation lists.",
+        )
     from app.db import get_consultations_for_patient
     account_id = current_user.account_id
     consultations = get_consultations_for_patient(account_id=account_id, profile_id=profile_id)
@@ -1391,6 +1502,10 @@ def get_consultation_details(
     if current_user.role == UserRole.PATIENT:
         if consultation.get("account_id") and consultation.get("account_id") != current_user.account_id:
             raise HTTPException(status_code=403, detail="Unauthorized: Access denied to other patient records.")
+
+    if current_user.role == UserRole.GUEST_EMERGENCY:
+        if current_user.guest_case_id != consultation_id:
+            raise HTTPException(status_code=403, detail="Unauthorized: Guest emergency access is restricted to the generated emergency case.")
 
     consultation["assignment"] = get_assignment_for_consultation(consultation_id)
     return consultation

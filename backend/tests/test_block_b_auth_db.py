@@ -41,7 +41,7 @@ def test_otp_request_and_verify_dev_number(client):
     assert req_res.status_code == 200
     data = req_res.json()
     assert data["success"] is True
-    assert data["dev_otp_hint"] == "123456"
+    assert "dev_otp_hint" not in data  # H1.2: OTPs never appear in API responses
 
     # 2. Verify with wrong code
     bad_res = client.post("/api/v1/auth/otp/verify", json={"phone_number": phone, "otp_code": "000000"})
