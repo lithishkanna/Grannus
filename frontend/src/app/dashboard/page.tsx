@@ -277,10 +277,16 @@ export default function DashboardPage() {
             <h1 className="text-2xl md:text-3xl font-heading font-medium text-foreground">
               Doctor Consultation Queue
             </h1>
-            {currentUser?.is_verified_doctor ? (
+            {currentUser?.full_name ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                <Stethoscope className="w-3.5 h-3.5" />
+                {currentUser.full_name}
+              </span>
+            ) : null}
+            {currentUser?.doctor_registration_number ? (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                Verified RMP: {currentUser.doctor_registration_number}
+                RMP: {currentUser.doctor_registration_number}
               </span>
             ) : null}
           </div>

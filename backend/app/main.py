@@ -425,6 +425,24 @@ async def list_patient_profiles(
     return get_profiles_for_account(current_user.account_id)
 
 
+@app.get("/api/v1/patient/consultations")
+async def list_patient_consultations(
+    profile_id: Optional[str] = None,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    List all clinical intake reports and consultations for the authenticated patient (B4.2).
+    Optionally filters by specific patient family profile.
+    """
+    from app.db import get_consultations_for_patient
+    account_id = current_user.account_id
+    consultations = get_consultations_for_patient(account_id=account_id, profile_id=profile_id)
+    return {
+        "count": len(consultations),
+        "consultations": consultations,
+    }
+
+
 @app.post("/api/v1/patient/profiles")
 async def create_patient_profile_endpoint(
     req: PatientProfileCreate,
@@ -635,6 +653,24 @@ async def process_audio(
     # 3. Schedule raw audio deletion under DPDP 72-hour retention policy
     get_retention_manager().schedule_audio_deletion(safe_filename, hours=72)
 
+    # Resolve patient phone account linkage (B4.2)
+    resolved_account_id = None
+    if profile_id:
+        from app.db import get_patient_profile
+        prof = get_patient_profile(profile_id)
+        if prof:
+            resolved_account_id = prof.get("account_id")
+
+    auth_header = request.headers.get("Authorization")
+    if not resolved_account_id and auth_header and auth_header.startswith("Bearer "):
+        try:
+            from app.auth import verify_token
+            token_user = verify_token(auth_header.split(" ", 1)[1])
+            if token_user and token_user.account_id:
+                resolved_account_id = token_user.account_id
+        except Exception:
+            pass
+
     patient_context = {
         "age": age,
         "gender": gender,
@@ -642,6 +678,7 @@ async def process_audio(
         "known_conditions": known_conditions,
         "current_medications": current_medications,
         "profile_id": profile_id,
+        "account_id": resolved_account_id,
     }
 
     try:

@@ -224,11 +224,15 @@ def request_phone_otp(phone: str) -> Tuple[bool, str, Optional[str]]:
         _MEM_OTPS[phone_norm] = []
     _MEM_OTPS[phone_norm].append(record)
 
-    # Dev hint only provided in development/test
+    # Dev hint only provided in development/test or sandbox numbers
     dev_hint = otp_code if (phone_norm in DEV_TEST_NUMBERS or phone in DEV_TEST_NUMBERS or os.getenv("ENV") != "production") else None
 
+    # Dispatch via SMS Gateway (MSG91 / Twilio)
+    from app.sms import send_sms_otp
+    sms_ok, sms_msg = send_sms_otp(phone_norm, otp_code)
+
     logger.info("OTP requested for patient phone=%s (expires in 5m)", phone_norm[:5] + "****" + phone_norm[-2:])
-    return True, "Verification code sent to your phone.", dev_hint
+    return True, sms_msg, dev_hint
 
 
 def verify_phone_otp(phone: str, otp_code: str) -> Tuple[bool, str, Optional[dict]]:
@@ -982,6 +986,37 @@ def get_consultation(consultation_id: str) -> Optional[dict]:
         except Exception as exc:
             logger.error("Supabase get_consultation error: %s", exc)
     return _MEM_CONSULTATIONS.get(consultation_id)
+
+
+def get_consultations_for_patient(
+    account_id: Optional[str] = None,
+    profile_id: Optional[str] = None,
+) -> List[dict]:
+    """
+    Retrieve all consultation history records belonging to a verified phone account or specific profile.
+    Used by /api/v1/patient/consultations to display patient history (B4.2).
+    """
+    client = get_supabase_client()
+    if client:
+        try:
+            query = client.table("consultations").select("*")
+            if profile_id:
+                query = query.eq("profile_id", profile_id)
+            elif account_id:
+                query = query.eq("account_id", account_id)
+            res = query.order("created_at", desc=True).execute()
+            if res.data:
+                return res.data
+        except Exception as exc:
+            logger.error("Supabase get_consultations_for_patient error: %s", exc)
+
+    items = list(_MEM_CONSULTATIONS.values())
+    if profile_id:
+        items = [c for c in items if c.get("profile_id") == profile_id]
+    elif account_id:
+        items = [c for c in items if c.get("account_id") == account_id]
+    items.sort(key=lambda c: c.get("created_at", ""), reverse=True)
+    return items
 
 
 def list_consultations_for_queue(

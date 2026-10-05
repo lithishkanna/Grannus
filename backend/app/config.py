@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     jwt_secret_key: str = ""
     phi_encryption_key: str = ""
 
+    # --- SMS Gateway (MSG91 / Twilio) ---
+    sms_provider: str = "msg91"  # "msg91", "twilio", "console"
+    msg91_auth_key: str = "578692AKhECENYY6ac3c206P1"
+    msg91_template_id: str = ""
+    msg91_sender_id: str = "GRANNU"
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_phone_number: str = ""
+
     # --- Audio Preprocessing ---
     enable_audio_preprocessing: bool = True
     min_audio_duration_seconds: float = 1.0

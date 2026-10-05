@@ -176,11 +176,13 @@ export function getAuthToken(): string | null {
 export function setAuthToken(token: string): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem('grannus_auth_token', token);
+  window.dispatchEvent(new Event('grannus_auth_change'));
 }
 
 export function removeAuthToken(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem('grannus_auth_token');
+  window.dispatchEvent(new Event('grannus_auth_change'));
 }
 
 export function getAuthHeaders(): Record<string, string> {
@@ -683,6 +685,7 @@ export async function logoutUser(): Promise<void> {
   if (typeof window !== 'undefined') {
     localStorage.removeItem('grannus_user');
     localStorage.removeItem('grannus_active_profile');
+    window.dispatchEvent(new Event('grannus_auth_change'));
   }
 }
 
@@ -733,6 +736,7 @@ export function getActiveProfile(): PatientProfile | null {
 export function setActiveProfile(profile: PatientProfile): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem('grannus_active_profile', JSON.stringify(profile));
+  window.dispatchEvent(new Event('grannus_auth_change'));
 }
 
 // -----------------------------------------------------------------------------
