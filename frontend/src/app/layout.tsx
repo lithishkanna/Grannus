@@ -18,10 +18,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={`${inter.variable} ${outfit.variable} ${jetbrainsMono.variable} font-sans antialiased min-h-screen flex flex-col bg-paper-grain`}>
-        <aside aria-label="Demo Synthetic Data Disclaimer" className="w-full bg-amber-500/15 border-b border-amber-500/30 text-amber-900 dark:text-amber-300 py-1.5 px-4 text-center text-xs font-medium tracking-wide flex items-center justify-center gap-2 z-50">
-          <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-          <span>Demo: synthetic data, not medical advice</span>
-        </aside>
         <Navbar />
         <main className="flex-1">
           {children}

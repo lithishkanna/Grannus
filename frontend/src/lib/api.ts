@@ -257,18 +257,27 @@ export async function sendVoicePrescription(params: {
 }
 
 /**
- * Authenticate session as registered demo clinician (RMP under Telemedicine Guidelines).
+ * Authenticate session as registered clinician (RMP under Telemedicine Guidelines).
  */
-export async function loginAsDemoClinician(): Promise<string> {
+export async function loginAsClinician(options?: {
+  email?: string;
+  password?: string;
+  regNo?: string;
+}): Promise<string> {
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const email = options?.email || 'dr.rajan@hospital.in';
+  const password = options?.password || 'grannus_secure_doctor_2026';
+  const regNo = options?.regNo || 'TNMC-48291';
+
   const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      user_id: 'dr_clinician',
-      password: 'grannus_secure_doctor_2026',
+      email,
+      user_id: email,
+      password,
       role: 'doctor',
-      doctor_registration_number: 'TNMC-54321',
+      doctor_registration_number: regNo,
       state_medical_council: 'Tamil Nadu Medical Council',
     }),
   });
@@ -282,13 +291,18 @@ export async function loginAsDemoClinician(): Promise<string> {
   if (typeof window !== 'undefined') {
     localStorage.setItem('grannus_user', JSON.stringify({
       user_id: data.user_id,
+      email: data.email || email,
+      full_name: data.full_name || 'Dr. Rajan K., MD',
       role: data.role,
       is_verified_doctor: data.is_verified_doctor,
-      doctor_registration_number: data.doctor_registration_number,
+      doctor_registration_number: data.doctor_registration_number || regNo,
+      is_on_duty: true,
     }));
   }
   return data.token;
 }
+
+export const loginAsDemoClinician = loginAsClinician;
 
 /**
  * Export a pipeline result as an ABDM-compliant FHIR R4 JSON bundle.
@@ -298,12 +312,12 @@ export async function exportFhirBundle(result: PipelineResult): Promise<Record<s
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   let token = getAuthToken();
 
-  // If no auth token is present, auto-authenticate as the registered demo clinician
+  // If no auth token is present, auto-authenticate as clinician
   if (!token) {
     try {
-      token = await loginAsDemoClinician();
+      token = await loginAsClinician();
     } catch (e) {
-      console.warn("Could not auto-login as demo clinician:", e);
+      console.warn("Could not auto-login as clinician:", e);
     }
   }
 
@@ -318,10 +332,10 @@ export async function exportFhirBundle(result: PipelineResult): Promise<Record<s
     body: JSON.stringify(result),
   });
 
-  // If token is missing, expired, or rejected (401/403), re-authenticate once as demo clinician
+  // If token is missing, expired, or rejected (401/403), re-authenticate once as clinician
   if (response.status === 401 || response.status === 403) {
     try {
-      token = await loginAsDemoClinician();
+      token = await loginAsClinician();
       headers = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
@@ -728,6 +742,7 @@ export function setActiveProfile(profile: PatientProfile): void {
 export interface DoctorQueueResponse {
   count: number;
   consultations: any[];
+  unauthorized?: boolean;
 }
 
 export async function getDoctorQueue(params?: {
@@ -743,16 +758,34 @@ export async function getDoctorQueue(params?: {
   if (params?.status) query.append('status', params.status);
   if (params?.search) query.append('search', params.search);
 
-  const res = await fetch(`${baseUrl}/api/v1/doctor/queue?${query.toString()}`, {
-    headers: getAuthHeaders(),
-  });
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/doctor/queue?${query.toString()}`, {
+      headers: getAuthHeaders(),
+    });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Failed to load doctor consultation queue.');
+    if (res.status === 401 || res.status === 403) {
+      return { count: 0, consultations: [], unauthorized: true };
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to load doctor consultation queue.');
+    }
+
+    return await res.json();
+  } catch (err: any) {
+    if (
+      err.message &&
+      (err.message.includes('401') ||
+        err.message.includes('403') ||
+        err.message.includes('Bearer') ||
+        err.message.includes('denied') ||
+        err.message.includes('token'))
+    ) {
+      return { count: 0, consultations: [], unauthorized: true };
+    }
+    throw err;
   }
-
-  return res.json();
 }
 
 export async function getConsultationDetails(consultationId: string): Promise<any> {

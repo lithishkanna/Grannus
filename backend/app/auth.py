@@ -55,10 +55,16 @@ def verify_password(password: str, hashed: str) -> bool:
 
 # Registered medical / admin users with PBKDF2-hashed passwords
 _REGISTERED_USERS: Dict[str, Dict[str, Any]] = {
+    "dr.rajan@hospital.in": {
+        "role": "doctor",
+        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "doctor_reg_no": "TNMC-48291",
+        "state_council": "Tamil Nadu Medical Council",
+    },
     "dr_clinician": {
         "role": "doctor",
         "password_hash": hash_password("grannus_secure_doctor_2026"),
-        "doctor_reg_no": "TNMC-54321",
+        "doctor_reg_no": "TNMC-48291",
         "state_council": "Tamil Nadu Medical Council",
     },
     "admin_user": {

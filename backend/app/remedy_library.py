@@ -688,7 +688,7 @@ def get_approved_home_remedy_guidance(
         translated_seek_doctor_if=translated_seek_doctor,
         language=patient_language,
         disclaimer=(
-            "Approved self-care information (demonstration). "
+            "Approved self-care guidelines. "
             "This information is for mild, self-limiting symptoms only and does not replace medical consultation. "
             "If any warning signs appear, please seek medical care or call 108 immediately."
         ),

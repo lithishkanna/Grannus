@@ -5,6 +5,7 @@ import { getDoctorQueue } from '@/lib/api';
 export function useConsultations() {
   const [consultations, setConsultations] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isUnauthorized, setIsUnauthorized] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterByPriority, setFilterByPriority] = useState<string>('All');
@@ -13,6 +14,29 @@ export function useConsultations() {
   const fetchConsultations = useCallback(async () => {
     setIsLoading(true);
     setError(null);
+
+    // Client-side guard: check token & role before making request
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('grannus_auth_token');
+      const stored = localStorage.getItem('grannus_user');
+      let isClinician = false;
+      if (stored) {
+        try {
+          const user = JSON.parse(stored);
+          isClinician = ['doctor', 'nurse', 'admin'].includes(user.role);
+        } catch {
+          // ignore json parse error
+        }
+      }
+
+      if (!token || !isClinician) {
+        setIsUnauthorized(true);
+        setConsultations([]);
+        setIsLoading(false);
+        return;
+      }
+    }
+
     try {
       const res = await getDoctorQueue({
         tier: filterByPriority !== 'All' ? filterByPriority : undefined,
@@ -20,6 +44,14 @@ export function useConsultations() {
         search: searchQuery || undefined,
       });
 
+      if (res.unauthorized) {
+        setIsUnauthorized(true);
+        setConsultations([]);
+        setIsLoading(false);
+        return;
+      }
+
+      setIsUnauthorized(false);
       const formatted = (res.consultations || []).map((item: any) => ({
         id: item.id,
         created_at: item.created_at,
@@ -52,7 +84,7 @@ export function useConsultations() {
 
       setConsultations(formatted);
     } catch (err: any) {
-      console.error(err);
+      console.warn('Queue fetch info:', err.message || err);
       setError(err.message || 'Failed to load consultation queue.');
     } finally {
       setIsLoading(false);
@@ -66,6 +98,7 @@ export function useConsultations() {
   return {
     consultations,
     isLoading,
+    isUnauthorized,
     error,
     refetch: fetchConsultations,
     filterByPriority,

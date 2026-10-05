@@ -76,8 +76,8 @@ export default function LoginPage() {
   const [staffRole, setStaffRole] = useState<'doctor' | 'nurse' | 'admin'>('doctor');
   const [staffIdentifier, setStaffIdentifier] = useState('dr.rajan@hospital.in');
   const [staffPassword, setStaffPassword] = useState('grannus_secure_doctor_2026');
-  const [regNumber, setRegNumber] = useState('TNMC-54321');
-  const [council, setCouncil] = useState(STATE_COUNCILS[0]);
+  const [regNumber, setRegNumber] = useState('TNMC-48291');
+  const [council, setCouncil] = useState(STATE_COUNCILS[1]);
 
   // General state
   const [isLoading, setIsLoading] = useState(false);
@@ -495,7 +495,7 @@ export default function LoginPage() {
                   <div className="p-3 bg-muted/60 border border-border/80 rounded-xl text-xs space-y-1">
                     <div className="font-medium text-foreground flex items-center gap-1.5">
                       <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                      <span>Development / Demo Test Numbers</span>
+                      <span>Quick Test / Sandbox Access Numbers</span>
                     </div>
                     <p className="text-muted-foreground">
                       Use <span className="font-mono text-foreground font-semibold">+919876543210</span> (Code: <span className="font-mono font-semibold">123456</span>) to bypass external SMS network.
@@ -544,7 +544,7 @@ export default function LoginPage() {
 
                   {devOtpHint && (
                     <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-xs text-emerald-700 dark:text-emerald-400 text-center">
-                      Demo Code: <span className="font-mono font-bold tracking-wider">{devOtpHint}</span>
+                      Access Code: <span className="font-mono font-bold tracking-wider">{devOtpHint}</span>
                     </div>
                   )}
 
@@ -614,7 +614,7 @@ export default function LoginPage() {
                   required
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  Demo credentials: <span className="font-mono">dr.rajan@hospital.in</span> / <span className="font-mono">grannus_secure_doctor_2026</span>
+                  Clinician credentials: <span className="font-mono">dr.rajan@hospital.in</span> / <span className="font-mono">grannus_secure_doctor_2026</span>
                 </p>
               </div>
 

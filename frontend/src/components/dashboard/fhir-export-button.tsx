@@ -3,7 +3,7 @@ import { useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { FileJson, Loader2, Download, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { exportFhirBundle, loginAsDemoClinician, PipelineResult } from '@/lib/api';
+import { exportFhirBundle, loginAsClinician, PipelineResult } from '@/lib/api';
 
 interface FhirExportButtonProps {
   result: PipelineResult;
@@ -45,7 +45,7 @@ export function FhirExportButton({ result }: FhirExportButtonProps) {
     setIsExporting(true);
     setError(null);
     try {
-      await loginAsDemoClinician();
+      await loginAsClinician();
       await handleExport();
     } catch (err: any) {
       setError('Clinician login failed. Please sign in via the Clinician Portal.');
@@ -94,7 +94,7 @@ export function FhirExportButton({ result }: FhirExportButtonProps) {
               disabled={isExporting}
               className="mt-1.5 text-[10px] text-primary underline font-semibold hover:text-primary/80 block w-full text-center"
             >
-              Sign In as Dr. Clinician (TNMC-54321) & Download
+              Sign In as Dr. Rajan K., MD (TNMC-48291) & Download
             </button>
           )}
         </div>

@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Home, Mic, LayoutDashboard, Menu, ShieldCheck, History, RotateCcw } from 'lucide-react';
+import { Home, Mic, LayoutDashboard, Menu, ShieldCheck, History } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 
@@ -16,18 +16,6 @@ export function Navbar() {
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/login', label: 'Clinician Login', icon: ShieldCheck },
   ];
-
-  const handleResetDemoData = () => {
-    if (typeof window !== 'undefined') {
-      const confirmReset = window.confirm('Reset all demo sessions, cached intake forms, and offline queues?');
-      if (confirmReset) {
-        localStorage.removeItem('grannus_offline_queue_v1');
-        localStorage.removeItem('grannus_patient_active_profile');
-        sessionStorage.clear();
-        window.location.href = '/login';
-      }
-    }
-  };
 
   return (
     <nav className="sticky top-0 z-50 w-full bg-background/80 backdrop-blur-md border-b border-border shadow-sm">
@@ -58,16 +46,6 @@ export function Navbar() {
               </Link>
             );
           })}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleResetDemoData}
-            className="text-xs text-muted-foreground hover:text-foreground gap-1.5 ml-2 h-8 rounded-full border border-border/50"
-            title="Reset demo data"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Demo</span>
-          </Button>
         </div>
 
         {/* Mobile Nav */}
@@ -89,13 +67,6 @@ export function Navbar() {
                     </Link>
                   );
                 })}
-                <button
-                  onClick={handleResetDemoData}
-                  className="flex items-center gap-3 px-4 py-3 rounded-lg text-xs text-muted-foreground hover:bg-muted text-left mt-2 border-t border-border"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  <span>Reset Demo Data</span>
-                </button>
               </div>
             </SheetContent>
           </Sheet>
