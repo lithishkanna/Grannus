@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # --- Sarvam AI ---
     sarvam_api_key: str = ""
-    sarvam_stt_model: str = "saaras:v2"  # "saaras:v2" or "saaras:v3"
+    sarvam_stt_model: str = "saaras:v4"  # "saaras:v4" (recommended) or "saaras:v3"
     sarvam_base_url: str = "https://api.sarvam.ai"
     sarvam_retry_attempts: int = 3
     sarvam_timeout_seconds: float = 30.0
