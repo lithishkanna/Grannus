@@ -35,40 +35,107 @@ class DataRetentionManager:
     ) -> Dict[str, Any]:
         """
         Schedule a raw audio file for automatic deletion after 24 hours (H4.1).
-        Stores created_at and delete_after timestamps.
+        Stores created_at and delete_after in the database so it survives server restarts.
         """
         now = datetime.now(timezone.utc)
         delete_after = now + timedelta(hours=hours)
         expiry_ts = time.time() + (hours * 3600)
+        h_id = hospital_id or "c5b971d1-fe39-40bf-a5cb-539f1a98059f"
 
         record = {
             "file_path": file_path,
-            "hospital_id": hospital_id or "c5b971d1-fe39-40bf-a5cb-539f1a98059f",
+            "hospital_id": h_id,
             "created_at": now.isoformat(),
             "delete_after": delete_after.isoformat(),
             "expiry_ts": expiry_ts,
             "purged": False,
         }
         self._scheduled_deletions[file_path] = record
-        logger.info("Scheduled 24h audio deletion for %s (expires at %s)", file_path, delete_after.isoformat())
+
+        # Persist to database queue (Block H4 / Blocker 5)
+        try:
+            from app.db import get_supabase_client
+            client = get_supabase_client()
+            if client:
+                db_record = {
+                    "file_path": file_path,
+                    "hospital_id": h_id,
+                    "created_at": now.isoformat(),
+                    "delete_after": delete_after.isoformat(),
+                    "purged": False,
+                }
+                client.table("audio_retention_queue").upsert(db_record).execute()
+        except Exception as exc:
+            logger.error("Failed to persist audio retention record to DB: %s", exc)
+
+        logger.info("Scheduled 24h audio deletion for %s (delete_after: %s)", file_path, delete_after.isoformat())
         return record
 
     def execute_retention_sweep(self) -> List[str]:
         """
         Sweep and purge expired audio files (H4.2, H4.3).
         Deletes audio files from storage and writes records to deletion_log.
+        Survives restarts by querying audio_retention_queue from database.
         """
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
         now_ts = time.time()
         purged = []
-        from app.db import log_deletion_event
+        from app.db import log_deletion_event, get_supabase_client
 
+        # 1. Check persistent database queue
+        client = get_supabase_client()
+        if client:
+            try:
+                res = (
+                    client.table("audio_retention_queue")
+                    .select("*")
+                    .eq("purged", False)
+                    .lte("delete_after", now_iso)
+                    .execute()
+                )
+                if res.data:
+                    for row in res.data:
+                        f_path = row["file_path"]
+                        p = Path(f_path)
+                        try:
+                            if p.exists():
+                                p.unlink()
+                            purged.append(f_path)
+                            self._purged_files.add(f_path)
+                            self._scheduled_deletions.pop(f_path, None)
+
+                            # Log to deletion_log
+                            log_deletion_event(
+                                resource_type="audio_recording",
+                                resource_id=f_path,
+                                reason="24-hour statutory audio retention policy expired",
+                                hospital_id=row.get("hospital_id"),
+                                metadata={
+                                    "created_at": row.get("created_at"),
+                                    "delete_after": row.get("delete_after"),
+                                },
+                            )
+                            # Mark purged in database
+                            client.table("audio_retention_queue").update({
+                                "purged": True,
+                                "purged_at": now_iso,
+                            }).eq("id", row["id"]).execute()
+                            logger.info("Database sweep purged expired audio: %s", f_path)
+                        except Exception as p_err:
+                            logger.error("Failed to purge db file %s: %s", f_path, p_err)
+            except Exception as exc:
+                logger.error("Supabase audio retention sweep error: %s", exc)
+
+        # 2. Check local queue (for active tests or clock-advance simulations)
         for file_path, record in list(self._scheduled_deletions.items()):
             if now_ts >= record.get("expiry_ts", 0):
                 p = Path(file_path)
                 try:
                     if p.exists():
                         p.unlink()
-                    purged.append(file_path)
+                    if file_path not in purged:
+                        purged.append(file_path)
                     self._purged_files.add(file_path)
                     del self._scheduled_deletions[file_path]
 
@@ -86,6 +153,7 @@ class DataRetentionManager:
                     logger.info("Purged expired 24h raw audio: %s", file_path)
                 except Exception as exc:
                     logger.error("Failed to purge %s: %s", file_path, exc)
+
         return purged
 
     def is_audio_purged(self, file_path: str) -> bool:

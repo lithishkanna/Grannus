@@ -13,14 +13,17 @@ import time
 import base64
 import json
 import re
+import logging
 from enum import Enum
 from typing import Optional, List, Dict, Any
+from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException, Security, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
 
+logger = logging.getLogger("rural_care.auth")
 security_bearer = HTTPBearer(auto_error=False)
 
 
@@ -125,18 +128,49 @@ def validate_doctor_registration(reg_number: str) -> bool:
     return bool(DOCTOR_REG_REGEX.match(reg_number.strip()))
 
 
-# Set of revoked token signatures (logout / revocation support B2.5)
+# Set of revoked token signatures (in-memory fast cache + database persistence)
 _REVOKED_TOKENS: set = set()
 
 
-def revoke_token(token: str) -> None:
-    """Revoke an active JWT token upon logout."""
-    if token:
-        _REVOKED_TOKENS.add(token.strip())
+def revoke_token(token: str, user_id: str = "unknown") -> None:
+    """Revoke an active JWT token upon logout, persisting to DB across restarts."""
+    if not token:
+        return
+    token_str = token.strip()
+    _REVOKED_TOKENS.add(token_str)
+    jti = hashlib.sha256(token_str.encode()).hexdigest()
+    try:
+        from app.db import get_supabase_client
+        client = get_supabase_client()
+        if client:
+            exp_iso = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+            client.table("revoked_tokens").insert({
+                "token_jti": jti,
+                "user_id": user_id,
+                "expires_at": exp_iso,
+            }).execute()
+    except Exception as exc:
+        logger.error("Failed to persist token revocation: %s", exc)
 
 
 def is_token_revoked(token: str) -> bool:
-    return token.strip() in _REVOKED_TOKENS
+    if not token:
+        return True
+    token_str = token.strip()
+    if token_str in _REVOKED_TOKENS:
+        return True
+    jti = hashlib.sha256(token_str.encode()).hexdigest()
+    try:
+        from app.db import get_supabase_client
+        client = get_supabase_client()
+        if client:
+            res = client.table("revoked_tokens").select("token_jti").eq("token_jti", jti).execute()
+            if res.data:
+                _REVOKED_TOKENS.add(token_str)
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def create_token(

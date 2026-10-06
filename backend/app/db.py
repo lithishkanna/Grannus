@@ -113,8 +113,20 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-def _hash_otp(otp_code: str, salt: str = "grannus_otp_salt_2026") -> str:
-    return hashlib.sha256(f"{otp_code}:{salt}".encode("utf-8")).hexdigest()
+def _hash_otp(otp_code: str, salt: Optional[str] = None) -> str:
+    s = salt or uuid.uuid4().hex
+    h = hashlib.sha256(f"{otp_code}:{s}".encode("utf-8")).hexdigest()
+    return f"{s}${h}"
+
+
+def _verify_otp_hash(otp_code: str, stored_hash: str) -> bool:
+    if "$" in stored_hash:
+        salt, h = stored_hash.split("$", 1)
+        expected = hashlib.sha256(f"{otp_code}:{salt}".encode("utf-8")).hexdigest()
+        return hmac.compare_digest(h, expected)
+    legacy_salt = "grannus_otp_salt_2026"
+    expected = hashlib.sha256(f"{otp_code}:{legacy_salt}".encode("utf-8")).hexdigest()
+    return hmac.compare_digest(stored_hash, expected)
 
 
 def _safe_uuid_or_none(val: Any) -> Optional[str]:
@@ -184,9 +196,14 @@ def normalize_phone(phone: str) -> str:
 def request_phone_otp(phone: str) -> Tuple[bool, str, Optional[str]]:
     """
     Generate 6-digit OTP for patient phone login.
-    Enforces 60-second resend cooldown and 5-minute expiration.
+    Enforces 30-second resend cooldown and 5-minute expiration.
+    Fails closed if SMS delivery fails.
     Returns: (success, message, dev_otp_hint_if_dev)
     """
+    from app.config import get_settings
+    settings = get_settings()
+    is_dev = settings.env == "development" or settings.allow_dev_otp
+
     phone_norm = normalize_phone(phone)
     now = time.time()
 
@@ -198,14 +215,13 @@ def request_phone_otp(phone: str) -> Tuple[bool, str, Optional[str]]:
 
     _OTP_COOLDOWNS[phone_norm] = now
 
-    # Determine OTP code
-    if phone_norm in DEV_TEST_NUMBERS or phone in DEV_TEST_NUMBERS:
+    # Determine OTP code: strictly gate dev test numbers behind development
+    if is_dev and (phone_norm in DEV_TEST_NUMBERS or phone in DEV_TEST_NUMBERS):
         otp_code = DEV_TEST_NUMBERS.get(phone_norm) or DEV_TEST_NUMBERS.get(phone)
     else:
         otp_code = f"{random.randint(100000, 999999):06d}"
 
-    otp_salt = uuid.uuid4().hex
-    otp_hash = _hash_otp(otp_code, salt=otp_salt)
+    otp_hash = _hash_otp(otp_code)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     otp_id = str(uuid.uuid4())
 
@@ -213,7 +229,6 @@ def request_phone_otp(phone: str) -> Tuple[bool, str, Optional[str]]:
         "id": otp_id,
         "phone_number": phone_norm,
         "otp_hash": otp_hash,
-        "otp_salt": otp_salt,
         "attempts": 0,
         "max_attempts": 5,
         "expires_at": expires_at.isoformat(),
@@ -233,12 +248,15 @@ def request_phone_otp(phone: str) -> Tuple[bool, str, Optional[str]]:
         _MEM_OTPS[phone_norm] = []
     _MEM_OTPS[phone_norm].append(record)
 
-    # Dev hint only provided in development/test or sandbox numbers
-    dev_hint = otp_code if (phone_norm in DEV_TEST_NUMBERS or phone in DEV_TEST_NUMBERS or os.getenv("ENV") != "production") else None
+    # Dev hint only provided in development with dev test numbers
+    dev_hint = otp_code if (is_dev and (phone_norm in DEV_TEST_NUMBERS or phone in DEV_TEST_NUMBERS)) else None
 
-    # Dispatch via SMS Gateway (MSG91 / Twilio)
+    # Dispatch via SMS Gateway (MSG91 / Twilio) - Fails closed!
     from app.sms import send_sms_otp
     sms_ok, sms_msg = send_sms_otp(phone_norm, otp_code)
+    if not sms_ok:
+        logger.error("SMS dispatch failed for %s: %s", phone_norm[:5] + "****", sms_msg)
+        return False, sms_msg, None
 
     logger.info("OTP requested for patient phone=%s (expires in 5m)", phone_norm[:5] + "****" + phone_norm[-2:])
     return True, sms_msg, dev_hint
@@ -289,12 +307,9 @@ def verify_phone_otp(phone: str, otp_code: str) -> Tuple[bool, str, Optional[dic
     if latest_record["expires_at"] < now_iso:
         return False, "Verification code has expired. Please request a new code.", None
 
-    # Check hash with per-OTP salt
+    # Verify hash with salt embedded in hash string
     expected_hash = latest_record["otp_hash"]
-    salt = latest_record.get("otp_salt", "grannus_otp_salt_2026")
-    given_hash = _hash_otp(code_clean, salt=salt)
-
-    if not hmac.compare_digest(given_hash, expected_hash):
+    if not _verify_otp_hash(code_clean, expected_hash):
         latest_record["attempts"] += 1
         for r in _MEM_OTPS.get(phone_norm, []):
             if r.get("id") == latest_record.get("id"):
@@ -307,11 +322,10 @@ def verify_phone_otp(phone: str, otp_code: str) -> Tuple[bool, str, Optional[dic
         remaining = latest_record["max_attempts"] - latest_record["attempts"]
         return False, f"Invalid verification code. {remaining} attempts remaining.", None
 
-    # Success: Mark used
+    # Success: Mark single-use as used across database and memory
     latest_record["is_used"] = True
     for r in _MEM_OTPS.get(phone_norm, []):
-        if r.get("id") == latest_record.get("id"):
-            r["is_used"] = True
+        r["is_used"] = True
     if client:
         try:
             client.table("otp_verifications").update({"is_used": True}).eq("id", latest_record["id"]).execute()
@@ -622,27 +636,50 @@ def find_staff_user(email: str) -> Optional[dict]:
     return None
 
 
-def authenticate_staff_user(email: str, password: str) -> Optional[dict]:
-    """Verify staff login with email and password."""
-    email_clean = email.strip().lower()
+_STAFF_FAILED_ATTEMPTS: Dict[str, Tuple[int, float]] = {}
 
+
+def authenticate_staff_user(email: str, password: str) -> Optional[dict]:
+    """
+    Verify staff login with email and password.
+    Enforces lockout policy: 5 consecutive failed attempts locks account for 15 minutes.
+    """
+    email_clean = email.strip().lower()
+    now = time.time()
+
+    # Lockout check
+    failed_count, lockout_until = _STAFF_FAILED_ATTEMPTS.get(email_clean, (0, 0.0))
+    if failed_count >= 5 and now < lockout_until:
+        logger.warning("Staff login blocked: %s is locked until %s", email_clean, datetime.fromtimestamp(lockout_until, timezone.utc).isoformat())
+        return None
+
+    user = None
     client = get_supabase_client()
     if client:
         try:
             res = client.table("staff_users").select("*").eq("email", email_clean).eq("is_active", True).execute()
             if res.data:
-                user = res.data[0]
-                if verify_password(password, user["password_hash"]):
-                    return user
+                db_user = res.data[0]
+                if verify_password(password, db_user["password_hash"]):
+                    user = db_user
         except Exception as exc:
             logger.error("Supabase staff auth error: %s", exc)
 
-    # Check fallback / seed in-memory users
-    for user_key, user in _FALLBACK_STAFF.items():
-        if user["email"].lower() == email_clean or user_key.lower() == email_clean:
-            if verify_password(password, user["password_hash"]):
-                return user
+    if not user:
+        for user_key, u in _FALLBACK_STAFF.items():
+            if u["email"].lower() == email_clean or user_key.lower() == email_clean:
+                if verify_password(password, u["password_hash"]):
+                    user = u
+                    break
 
+    if user:
+        _STAFF_FAILED_ATTEMPTS.pop(email_clean, None)
+        return user
+
+    new_count = failed_count + 1
+    new_lockout = (now + 900.0) if new_count >= 5 else 0.0
+    _STAFF_FAILED_ATTEMPTS[email_clean] = (new_count, new_lockout)
+    logger.warning("Failed staff auth for %s (attempt %d/5)", email_clean, new_count)
     return None
 
 

@@ -45,12 +45,13 @@ class Settings(BaseSettings):
 
     # --- SMS Gateway (MSG91 / Twilio) ---
     sms_provider: str = "msg91"  # "msg91", "twilio", "console"
-    msg91_auth_key: str = "578692AKhECENYY6ac3c206P1"
+    msg91_auth_key: str = ""
     msg91_template_id: str = ""
     msg91_sender_id: str = "GRANNU"
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
+    allow_dev_otp: bool = False
 
     # --- Audio Preprocessing ---
     enable_audio_preprocessing: bool = True

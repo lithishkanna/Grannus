@@ -42,30 +42,34 @@ def send_sms_otp(phone_number: str, otp_code: str) -> Tuple[bool, str]:
     """
     Dispatch single-use 6-digit OTP code to the patient's mobile phone.
     Returns: (success: bool, user_message: str)
+    Fails closed: if provider errors, returns (False, error_message).
     """
     settings = get_settings()
     phone_clean = phone_number.strip()
+    is_dev = settings.env == "development" or settings.allow_dev_otp
 
-    # 1. Check sandbox numbers (credit protection)
-    if phone_clean in SANDBOX_TEST_NUMBERS or phone_clean.replace("+", "") in SANDBOX_TEST_NUMBERS:
-        logger.info("Sandbox test number detected (%s). Skipping external SMS to preserve credits.", phone_clean)
+    # 1. Gate sandbox test numbers strictly behind development (preserve quota)
+    if is_dev and (phone_clean in SANDBOX_TEST_NUMBERS or phone_clean.replace("+", "") in SANDBOX_TEST_NUMBERS):
+        logger.info("Sandbox test number detected (%s) in dev mode. Skipping external SMS.", phone_clean)
         return True, "Sandbox test code active (Code: 123456)."
 
     provider = (settings.sms_provider or "msg91").lower().strip()
 
     # 2. Dispatch via MSG91
     if provider == "msg91":
-        auth_key = settings.msg91_auth_key or "578692AKhECENYY6ac3c206P1"
+        auth_key = settings.msg91_auth_key
         if not auth_key:
-            logger.warning("MSG91_AUTH_KEY is not configured. Falling back to local verification.")
-            return True, "Verification code generated (local sandbox mode)."
+            if is_dev:
+                logger.warning("MSG91_AUTH_KEY is not configured. Falling back to local dev mode.")
+                return True, "Verification code generated (local sandbox mode)."
+            logger.error("SMS Gateway error: MSG91_AUTH_KEY is not configured in %s environment.", settings.env)
+            return False, "SMS provider authentication key is not configured."
 
         mobile = normalize_mobile_for_india(phone_clean)
         template_id = settings.msg91_template_id or ""
 
         try:
             # MSG91 v5 Send OTP Endpoint
-            # https://control.msg91.com/api/v5/otp?template_id=...&mobile=...&authkey=...&otp=...
             query_params = {
                 "mobile": mobile,
                 "authkey": auth_key,
@@ -102,12 +106,15 @@ def send_sms_otp(phone_number: str, otp_code: str) -> Tuple[bool, str]:
                     return True, "Verification code sent to your mobile phone via SMS."
                 else:
                     msg = resp_json.get("message", "Provider returned error status.")
-                    logger.warning("MSG91 API error for %s: %s (falling back to in-app code)", mobile, msg)
-                    return True, f"Code sent (provider note: {msg})."
+                    logger.error("MSG91 API error for %s: %s", mobile, msg)
+                    return False, f"Failed to deliver verification SMS: {msg}"
 
         except Exception as exc:
-            logger.warning("Could not reach MSG91 gateway for %s: %s. Using safe verification fallback.", phone_clean, exc)
-            return True, "Verification code generated successfully."
+            logger.error("Could not reach MSG91 gateway for %s: %s", phone_clean, exc)
+            if is_dev:
+                logger.info("Development fallback: allowing dev verification code for %s", phone_clean)
+                return True, "Verification code generated (dev fallback)."
+            return False, "SMS gateway connection failed. Please try again later."
 
     # 3. Dispatch via Twilio (if configured)
     elif provider == "twilio" and settings.twilio_account_sid and settings.twilio_auth_token:
@@ -133,9 +140,16 @@ def send_sms_otp(phone_number: str, otp_code: str) -> Tuple[bool, str]:
                 if response.getcode() in (200, 201):
                     logger.info("Twilio SMS dispatched successfully to %s", phone_clean)
                     return True, "Verification code sent via SMS."
+                else:
+                    logger.error("Twilio SMS failed with HTTP status %s", response.getcode())
+                    return False, "Twilio SMS dispatch failed."
         except Exception as exc:
-            logger.warning("Twilio SMS dispatch failed: %s", exc)
+            logger.error("Twilio SMS dispatch failed: %s", exc)
+            return False, "Twilio gateway connection failed."
 
-    # 4. Local / Console fallback
-    logger.info("SMS Gateway Console Mode: OTP for %s is %s", phone_clean, otp_code)
-    return True, "Verification code sent to your phone."
+    # 4. Local / Console fallback (strictly gated to development)
+    if is_dev:
+        logger.info("SMS Gateway Console Mode (Dev): OTP for %s is %s", phone_clean, otp_code)
+        return True, "Verification code sent to your phone."
+
+    return False, "No active SMS provider configured for production."

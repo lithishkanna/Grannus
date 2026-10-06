@@ -16,3 +16,7 @@ soundfile>=0.12,<1
 # ML priority model
 scikit-learn==1.9.0
 joblib>=1.3,<2
+
+# Database & Testing
+supabase>=2.0.0
+pytest-random-order>=1.1.0

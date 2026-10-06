@@ -31,12 +31,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov pytest-random-order
 
-      - name: Run Test Suite across all modules
+      - name: Run Test Suite across all modules in random order
         working-directory: ./backend
         run: |
-          pytest tests/ -v --cov=app --cov-report=term-missing
+          pytest tests/ -v --random-order --cov=app --cov-report=term-missing
 
   clinical-safety-gate:
     name: Clinical Safety & Zero-Under-Triage Gate
@@ -62,12 +62,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
+          pip install pytest pytest-random-order
 
       - name: Run Clinical Gold Dataset Validation
         working-directory: ./backend
         run: |
-          pytest tests/test_phase2_clinical_validation.py -v
+          pytest tests/test_phase2_clinical_validation.py -v --random-order
 
   frontend-validation:
     name: Frontend TypeScript & Next.js Build

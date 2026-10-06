@@ -5,6 +5,7 @@ Endpoints:
 - GET  /health — Health check & configuration status
 - POST /api/v1/pipeline/process-audio — Audio triage pipeline
 """
+import os
 import logging
 import asyncio
 from typing import Optional, List, Dict, Any
@@ -101,6 +102,16 @@ async def lifespan(app: FastAPI):
             logger.warning("ML priority model not available at startup. Will use rule engine.")
     except Exception as exc:
         logger.warning("Failed to initialize ML model at startup: %s", exc)
+
+    # Statutory 24-hour audio retention sweep on startup
+    try:
+        from app.security.data_retention import get_retention_manager
+        purged = get_retention_manager().execute_retention_sweep()
+        if purged:
+            logger.info("Startup audio retention sweep purged %d files.", len(purged))
+    except Exception as exc:
+        logger.warning("Startup audio retention sweep error: %s", exc)
+
     yield
 
 app = FastAPI(
@@ -113,17 +124,35 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# -- CORS: allow frontend origins to access the API --
+# -- CORS: allow configured origins or local development origins --
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()] if allowed_origins_env else [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Enforce defensive HTTP security headers across all endpoints."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none';"
+    if get_settings().env == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+    return response
 
 
 @app.middleware("http")
