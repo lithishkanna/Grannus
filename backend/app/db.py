@@ -29,20 +29,25 @@ _supabase_client = None
 
 
 def get_supabase_client():
-    """Lazy initialize Supabase client if configured."""
+    """Lazy initialize Supabase client with server-side service-role key (H2.1, H2.2)."""
     global _supabase_client
     if _supabase_client is not None:
         return _supabase_client
 
     settings = get_settings()
-    if settings.supabase_url and settings.supabase_anon_key:
+    key = settings.supabase_service_role_key or os.getenv("SUPABASE_SERVICE_ROLE_KEY") or settings.supabase_anon_key
+    if settings.supabase_url and key:
         try:
             from supabase import create_client, Client
-            _supabase_client = create_client(settings.supabase_url, settings.supabase_anon_key)
-            logger.info("Supabase client initialized successfully")
+            _supabase_client = create_client(settings.supabase_url, key)
+            logger.info("Supabase client initialized successfully with service role key")
         except Exception as exc:
+            if settings.env.lower() in ("production", "staging"):
+                raise RuntimeError(f"Database connection failed in {settings.env}: {exc}")
             logger.warning("Could not initialize Supabase client: %s. Using in-memory fallback store.", exc)
             _supabase_client = None
+    elif settings.env.lower() in ("production", "staging"):
+        raise RuntimeError(f"Database configuration missing in {settings.env}. SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are mandatory.")
     return _supabase_client
 
 
@@ -51,7 +56,7 @@ def get_supabase_client():
 # -----------------------------------------------------------------------------
 _MEM_HOSPITALS = [
     {
-        "id": "11111111-1111-1111-1111-111111111111",
+        "id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f",
         "name": "District Hospital Rural Outreach",
         "code": "DHRO-01",
         "location": "Tamil Nadu, India",
@@ -60,11 +65,11 @@ _MEM_HOSPITALS = [
 ]
 
 _MEM_DEPARTMENTS = [
-    {"id": "d1", "hospital_id": "11111111-1111-1111-1111-111111111111", "name": "Emergency Medicine", "code": "EMERGENCY"},
-    {"id": "d2", "hospital_id": "11111111-1111-1111-1111-111111111111", "name": "General Medicine", "code": "GEN_MED"},
-    {"id": "d3", "hospital_id": "11111111-1111-1111-1111-111111111111", "name": "Pediatrics", "code": "PEDIATRICS"},
-    {"id": "d4", "hospital_id": "11111111-1111-1111-1111-111111111111", "name": "Obstetrics & Gynecology", "code": "OBGYN"},
-    {"id": "d5", "hospital_id": "11111111-1111-1111-1111-111111111111", "name": "Cardiology", "code": "CARDIOLOGY"},
+    {"id": "d1", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Emergency Medicine", "code": "EMERGENCY"},
+    {"id": "d2", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "General Medicine", "code": "GEN_MED"},
+    {"id": "d3", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Pediatrics", "code": "PEDIATRICS"},
+    {"id": "d4", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Obstetrics & Gynecology", "code": "OBGYN"},
+    {"id": "d5", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Cardiology", "code": "CARDIOLOGY"},
 ]
 
 _MEM_ACCOUNTS: Dict[str, dict] = {}
@@ -77,6 +82,8 @@ _MEM_FOLLOW_UPS: Dict[str, dict] = {}
 _MEM_CONSULTATIONS: Dict[str, dict] = {}
 _MEM_ASSIGNMENTS: Dict[str, dict] = {}
 _MEM_AUDIT_LOGS: List[dict] = []
+_MEM_GUEST_CASES: Dict[str, dict] = {}
+_MEM_DELETION_LOGS: List[dict] = []
 
 # Rate limiter for OTP requests: phone -> timestamp
 _OTP_COOLDOWNS: Dict[str, float] = {}
@@ -790,6 +797,102 @@ def append_audit_log_entry(
     return record
 
 
+def update_audit_log_entry(log_id: str, updates: dict) -> None:
+    """Audit log is immutable and strictly append-only (H2.6)."""
+    raise PermissionError("Audit log is strictly append-only. Updating audit records is prohibited.")
+
+
+def delete_audit_log_entry(log_id: str) -> None:
+    """Audit log is immutable and strictly append-only (H2.6)."""
+    raise PermissionError("Audit log is strictly append-only. Deleting audit records is prohibited.")
+
+
+# -----------------------------------------------------------------------------
+# Guest Emergency Cases (H1.3, H2.4)
+# -----------------------------------------------------------------------------
+def save_guest_case(case_id: str, case_data: dict) -> dict:
+    """Persist guest emergency case in database with RLS (H1.3, H2.4)."""
+    h_id = _safe_uuid_or_none(case_data.get("hospital_id")) or "c5b971d1-fe39-40bf-a5cb-539f1a98059f"
+    record = {
+        "id": case_id,
+        "patient_name": case_data.get("patient_name", "Emergency Patient"),
+        "age": case_data.get("age"),
+        "urgency_tier": case_data.get("urgency_tier", "emergency"),
+        "chief_complaint": case_data.get("chief_complaint", "Emergency Walk-in / Intake"),
+        "guest_token_hash": case_data.get("guest_token_hash", ""),
+        "status": case_data.get("status", "unverified"),
+        "hospital_id": h_id,
+        "created_at": case_data.get("created_at", datetime.now(timezone.utc).isoformat()),
+    }
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("guest_cases").insert(record).execute()
+        except Exception as exc:
+            logger.error("Supabase insert guest_cases error: %s", exc)
+
+    _MEM_GUEST_CASES[case_id] = record
+    return record
+
+
+def get_guest_case(case_id: str) -> Optional[dict]:
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("guest_cases").select("*").eq("id", case_id).execute()
+            if res.data:
+                return res.data[0]
+        except Exception as exc:
+            logger.error("Supabase get_guest_case error: %s", exc)
+    return _MEM_GUEST_CASES.get(case_id)
+
+
+# -----------------------------------------------------------------------------
+# Deletion Log (H4.3, H2.4)
+# -----------------------------------------------------------------------------
+def log_deletion_event(
+    resource_type: str,
+    resource_id: str,
+    reason: str,
+    hospital_id: Optional[str] = "c5b971d1-fe39-40bf-a5cb-539f1a98059f",
+    metadata: Optional[dict] = None,
+) -> dict:
+    """Log an immutable deletion record to deletion_log (H4.3)."""
+    h_id = _safe_uuid_or_none(hospital_id) or "c5b971d1-fe39-40bf-a5cb-539f1a98059f"
+    record = {
+        "id": str(uuid.uuid4()),
+        "hospital_id": h_id,
+        "resource_type": resource_type,
+        "resource_id": resource_id,
+        "reason": reason,
+        "deleted_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": metadata or {},
+    }
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("deletion_log").insert(record).execute()
+        except Exception as exc:
+            logger.error("Supabase insert deletion_log error: %s", exc)
+
+    _MEM_DELETION_LOGS.append(record)
+    return record
+
+
+def get_deletion_logs() -> List[dict]:
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("deletion_log").select("*").order("deleted_at", desc=True).execute()
+            if res.data:
+                sb_ids = {log["id"] for log in res.data}
+                merged = list(res.data) + [l for l in _MEM_DELETION_LOGS if l.get("id") not in sb_ids]
+                return merged
+        except Exception as exc:
+            logger.error("Supabase get_deletion_logs error: %s", exc)
+    return list(_MEM_DELETION_LOGS)
+
+
 # -----------------------------------------------------------------------------
 # Block C: Consent, PIN, Data Export & Statutory Erasure (B4.3, B4.4, B4.5, B4.6)
 # -----------------------------------------------------------------------------
@@ -946,9 +1049,14 @@ TIER_PRIORITY_ORDER = {
 def save_consultation(consultation_id: str, data: dict) -> dict:
     """Save consultation record with full triage results and department mapping (B3.1, B5.3)."""
     now_iso = datetime.now(timezone.utc).isoformat()
+    orig_tx = data.get("original_transcript") or data.get("transcript_original") or ""
+    eng_tx = data.get("english_transcript") or data.get("transcript_english") or ""
+    phone = data.get("phone_number") or ""
+    h_id = _safe_uuid_or_none(data.get("hospital_id")) or "c5b971d1-fe39-40bf-a5cb-539f1a98059f"
+
     record = {
         "id": consultation_id,
-        "hospital_id": data.get("hospital_id", "c5b971d1-fe39-40bf-a5cb-539f1a98059f"),
+        "hospital_id": h_id,
         "account_id": data.get("account_id"),
         "profile_id": data.get("profile_id"),
         "patient_id": data.get("patient_id"),
@@ -957,8 +1065,11 @@ def save_consultation(consultation_id: str, data: dict) -> dict:
         "urgency_tier": data.get("urgency_tier", "doctor_soon"),
         "department_id": _safe_uuid_or_none(data.get("department_id")),
         "assigned_doctor_id": _safe_uuid_or_none(data.get("assigned_doctor_id")),
-        "original_transcript": data.get("original_transcript", ""),
-        "english_transcript": data.get("english_transcript", ""),
+        "original_transcript": orig_tx,
+        "transcript_original": orig_tx,
+        "english_transcript": eng_tx,
+        "transcript_english": eng_tx,
+        "phone_number": phone,
         "audio_url": data.get("audio_url", ""),
         "complaint_category": data.get("complaint_category"),
         "chief_complaint": data.get("chief_complaint"),
@@ -968,9 +1079,29 @@ def save_consultation(consultation_id: str, data: dict) -> dict:
     }
 
     client = get_supabase_client()
-    if client:
+    if client and _safe_uuid_or_none(consultation_id):
+        db_record = {
+            "id": consultation_id,
+            "hospital_id": h_id,
+            "account_id": _safe_uuid_or_none(data.get("account_id")),
+            "profile_id": _safe_uuid_or_none(data.get("profile_id")),
+            "patient_id": data.get("patient_id"),
+            "status": record["status"],
+            "patient_language": record["patient_language"],
+            "urgency_tier": record["urgency_tier"],
+            "department_id": record["department_id"],
+            "assigned_doctor_id": record["assigned_doctor_id"],
+            "original_transcript": orig_tx,
+            "english_transcript": eng_tx,
+            "audio_url": record["audio_url"],
+            "complaint_category": record["complaint_category"],
+            "chief_complaint": record["chief_complaint"],
+            "full_result": record["full_result"],
+            "created_at": record["created_at"],
+            "updated_at": record["updated_at"],
+        }
         try:
-            client.table("consultations").upsert(record).execute()
+            client.table("consultations").upsert(db_record).execute()
         except Exception as exc:
             logger.error("Supabase save_consultation error: %s", exc)
 
@@ -981,7 +1112,7 @@ def save_consultation(consultation_id: str, data: dict) -> dict:
 def get_consultation(consultation_id: str) -> Optional[dict]:
     """Retrieve consultation record by ID."""
     client = get_supabase_client()
-    if client:
+    if client and _safe_uuid_or_none(consultation_id):
         try:
             res = client.table("consultations").select("*").eq("id", consultation_id).execute()
             if res.data:
@@ -999,8 +1130,14 @@ def get_consultations_for_patient(
     Retrieve all consultation history records belonging to a verified phone account or specific profile.
     Used by /api/v1/patient/consultations to display patient history (B4.2).
     """
+    can_query_supabase = False
+    if profile_id and _safe_uuid_or_none(profile_id):
+        can_query_supabase = True
+    elif account_id and _safe_uuid_or_none(account_id):
+        can_query_supabase = True
+
     client = get_supabase_client()
-    if client:
+    if client and can_query_supabase:
         try:
             query = client.table("consultations").select("*")
             if profile_id:

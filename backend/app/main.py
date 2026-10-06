@@ -15,6 +15,7 @@ load_dotenv()  # populate os.environ from .env before Settings() reads it
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import hashlib
 import time
 import uuid
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Depends, status, Security
@@ -83,6 +84,15 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     if not settings.jwt_secret_key:
         raise RuntimeError("JWT_SECRET_KEY is mandatory and not configured. Backend refusing to start.")
+
+    # Block H2: In production/staging, database and SMS provider must be configured
+    if settings.env.lower() in ("production", "prod", "staging"):
+        key = settings.supabase_service_role_key or settings.supabase_anon_key
+        if not settings.supabase_url or not key:
+            raise RuntimeError(f"Database (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY) is mandatory in {settings.env}. Backend refusing to start.")
+        if not settings.sms_provider or (settings.sms_provider == "msg91" and not settings.msg91_auth_key) or (settings.sms_provider == "twilio" and not settings.twilio_account_sid):
+            raise RuntimeError(f"SMS provider is mandatory in {settings.env}. Backend refusing to start.")
+
     try:
         model = get_model()
         if model.is_available():
@@ -430,7 +440,16 @@ def guest_emergency_intake(req: GuestEmergencyRequest):
         expires_in_seconds=7200,  # 2 hours
     )
 
-    from app.db import save_consultation
+    from app.db import save_consultation, save_guest_case
+    save_guest_case(case_id, {
+        "id": case_id,
+        "patient_name": clean_name,
+        "age": req.age,
+        "urgency_tier": "emergency",
+        "chief_complaint": f"Emergency Guest Walk-in / Intake: {clean_name}",
+        "guest_token_hash": hashlib.sha256(token.encode()).hexdigest(),
+        "status": "unverified",
+    })
     save_consultation(case_id, {
         "id": case_id,
         "patient_id": guest_id,
@@ -584,6 +603,36 @@ class VerifyPinRequest(BaseModel):
     pin: str
 
 
+@app.get("/api/v1/patient/profiles/{profile_id}")
+def get_patient_profile_endpoint(
+    profile_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Retrieve details for a single patient profile with ownership enforcement (H3.1)."""
+    if current_user.role == UserRole.GUEST_EMERGENCY:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Guest emergency sessions cannot browse patient profiles.",
+        )
+    from app.db import get_patient_profile
+    profile = get_patient_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Patient profile not found.")
+    if current_user.role == UserRole.PATIENT:
+        if profile.get("account_id") and profile.get("account_id") != current_user.account_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: You cannot access another account's patient profile.",
+            )
+    get_audit_logger().log(
+        action="PATIENT_PROFILE_READ",
+        user_id=current_user.user_id,
+        role=current_user.role.value,
+        details={"profile_id": profile_id},
+    )
+    return profile
+
+
 @app.post("/api/v1/patient/profiles/{profile_id}/verify-pin")
 def verify_profile_pin_endpoint(
     profile_id: str,
@@ -591,7 +640,21 @@ def verify_profile_pin_endpoint(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Verify 4-digit PIN before unlocking private patient profile (B4.3)."""
-    from app.db import verify_profile_pin
+    if current_user.role == UserRole.GUEST_EMERGENCY:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Guest emergency sessions cannot verify profile PINs.",
+        )
+    from app.db import get_patient_profile, verify_profile_pin
+    profile = get_patient_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Patient profile not found.")
+    if current_user.role == UserRole.PATIENT:
+        if profile.get("account_id") and profile.get("account_id") != current_user.account_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: You cannot access another account's patient profile.",
+            )
     if not verify_profile_pin(profile_id, req.pin):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -714,6 +777,12 @@ def stream_media(file: str, expires: int, sig: str):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Signed media link is invalid or expired. Please re-authenticate.",
         )
+    # Block H4.7: If audio file has expired/deleted under 24h retention policy -> 404
+    if get_retention_manager().is_audio_purged(file) or not os.path.exists(file):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Audio recording has expired or been permanently deleted under the 24-hour statutory retention policy.",
+        )
     return {"status": "authorized", "file": file, "valid_until": expires}
 
 
@@ -735,14 +804,16 @@ async def process_audio(
     known_conditions: str = Form(None, description="Optional pre-existing medical conditions"),
     current_medications: str = Form(None, description="Optional current medications"),
     profile_id: Optional[str] = Form(None, description="Optional patient profile ID (B4.2)"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> PipelineResult:
     """
     Process patient voice recording through the complete AI triage pipeline.
     Secured with:
+      - Mandatory user authentication (H3.5)
       - Rate limiting & abuse protection
       - Magic byte signature validation
       - Path traversal sanitization
-      - Automated 72-hour audio deletion scheduling
+      - Automated 24-hour audio deletion scheduling (H4.1)
       - Audit trail logging
     """
     # 1. Rate limiting & abuse defense
@@ -761,8 +832,8 @@ async def process_audio(
     safe_filename = sanitize_filename(audio.filename)
     validate_audio_upload(audio_bytes, safe_filename, settings.max_audio_bytes)
 
-    # 3. Schedule raw audio deletion under DPDP 72-hour retention policy
-    get_retention_manager().schedule_audio_deletion(safe_filename, hours=72)
+    # 3. Schedule raw audio deletion under 24-hour retention policy (H4.1)
+    get_retention_manager().schedule_audio_deletion(safe_filename, hours=24)
 
     # Resolve patient phone account linkage (B4.2)
     resolved_account_id = None
@@ -1064,10 +1135,11 @@ async def submit_audio_async(
     known_conditions: str = Form(None),
     current_medications: str = Form(None),
     profile_id: Optional[str] = Form(None),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     Non-blocking asynchronous audio intake endpoint returning 202 Accepted.
-    Eliminates HTTP gateway timeouts on slow / low-bandwidth 2G/3G rural networks.
+    Requires authentication (H3.5).
     """
     await rate_limit_patient_intake(request)
 
@@ -1082,8 +1154,8 @@ async def submit_audio_async(
     safe_filename = sanitize_filename(audio.filename)
     validate_audio_upload(audio_bytes, safe_filename, settings.max_audio_bytes)
 
-    # Schedule raw audio deletion under DPDP 72-hour retention policy
-    get_retention_manager().schedule_audio_deletion(safe_filename, hours=72)
+    # Schedule raw audio deletion under 24-hour retention policy (H4.1)
+    get_retention_manager().schedule_audio_deletion(safe_filename, hours=24)
 
     patient_context = {
         "age": age,
@@ -1092,6 +1164,8 @@ async def submit_audio_async(
         "known_conditions": known_conditions,
         "current_medications": current_medications,
         "profile_id": profile_id,
+        "account_id": current_user.account_id,
+        "user_id": current_user.user_id,
     }
 
     job_mgr = get_job_manager()
@@ -1195,6 +1269,18 @@ def check_in_consultation(
     Record patient 2 to 3 day follow-up check-in ('improving', 'same', 'worse').
     Automatically escalates urgency tier if 'worse' is reported.
     """
+    if current_user.role in (UserRole.NURSE, UserRole.ADMIN):
+        raise HTTPException(status_code=403, detail="Forbidden: Hospital staff cannot record patient self-check-ins.")
+    if current_user.role == UserRole.GUEST_EMERGENCY and current_user.guest_case_id != consultation_id:
+        raise HTTPException(status_code=403, detail="Forbidden: Guest emergency access restricted to own case.")
+
+    from app.db import get_consultation
+    consultation = get_consultation(consultation_id)
+    if consultation:
+        if current_user.role == UserRole.PATIENT:
+            if consultation.get("account_id") and consultation.get("account_id") != current_user.account_id:
+                raise HTTPException(status_code=403, detail="Forbidden: You cannot check-in for another patient's consultation.")
+
     response = get_follow_up_manager().record_check_in(
         consultation_id=consultation_id,
         status=req.status,
@@ -1226,6 +1312,18 @@ def escalate_consultation(
     Immediately escalates the patient up one urgency tier:
       self_care -> doctor_soon -> doctor_today -> emergency
     """
+    if current_user.role in (UserRole.NURSE, UserRole.ADMIN):
+        raise HTTPException(status_code=403, detail="Forbidden: Hospital staff cannot trigger patient self-escalation.")
+    if current_user.role == UserRole.GUEST_EMERGENCY and current_user.guest_case_id != consultation_id:
+        raise HTTPException(status_code=403, detail="Forbidden: Guest emergency access restricted to own case.")
+
+    from app.db import get_consultation
+    consultation = get_consultation(consultation_id)
+    if consultation:
+        if current_user.role == UserRole.PATIENT:
+            if consultation.get("account_id") and consultation.get("account_id") != current_user.account_id:
+                raise HTTPException(status_code=403, detail="Forbidden: You cannot escalate another patient's consultation.")
+
     reason = req.reason if req and req.reason else "Patient initiated one-tap 'I feel worse' escalation."
     response = get_follow_up_manager().escalate_tier(
         consultation_id=consultation_id,
@@ -1364,6 +1462,22 @@ def get_consultation_voice_thread(
     """
     Retrieve asynchronous two-way bilingual voice thread messages.
     """
+    if current_user.role in (UserRole.NURSE, UserRole.ADMIN):
+        raise HTTPException(status_code=403, detail="Forbidden: Nurses and admins cannot access clinical voice threads.")
+    if current_user.role == UserRole.GUEST_EMERGENCY and current_user.guest_case_id != consultation_id:
+        raise HTTPException(status_code=403, detail="Forbidden: Guest emergency access restricted to own case.")
+
+    from app.db import get_consultation, get_assignment_for_consultation
+    consultation = get_consultation(consultation_id)
+    if consultation:
+        if current_user.role == UserRole.PATIENT:
+            if consultation.get("account_id") and consultation.get("account_id") != current_user.account_id:
+                raise HTTPException(status_code=403, detail="Forbidden: You cannot access another patient's voice thread.")
+        elif current_user.role == UserRole.DOCTOR:
+            assignment = get_assignment_for_consultation(consultation_id)
+            if assignment and assignment.get("doctor_id") and assignment.get("doctor_id") != current_user.user_id:
+                raise HTTPException(status_code=403, detail="Forbidden: Case is assigned to another clinician.")
+
     return get_voice_thread_manager().get_or_create_thread(consultation_id)
 
 
@@ -1378,6 +1492,21 @@ async def patient_voice_reply(
     Two-way asynchronous voice thread: Patient speaks in regional dialect.
     Transcribes regional speech -> translates to English for doctor -> verifies with back-translation.
     """
+    if current_user.role not in (UserRole.PATIENT, UserRole.GUEST_EMERGENCY):
+        raise HTTPException(status_code=403, detail="Forbidden: Only patients may record replies in this endpoint.")
+
+    from app.db import get_consultation
+    consultation = get_consultation(consultation_id)
+    if not consultation:
+        raise HTTPException(status_code=404, detail=f"Consultation '{consultation_id}' not found.")
+
+    if current_user.role == UserRole.PATIENT:
+        if consultation.get("account_id") and consultation.get("account_id") != current_user.account_id:
+            raise HTTPException(status_code=403, detail="Forbidden: You cannot reply to another patient's thread.")
+    elif current_user.role == UserRole.GUEST_EMERGENCY:
+        if current_user.guest_case_id != consultation_id:
+            raise HTTPException(status_code=403, detail="Forbidden: Guest token restricted to own case.")
+
     settings = get_settings()
     if not settings.sarvam_api_key:
         raise HTTPException(status_code=500, detail="Server configuration error: missing SARVAM_API_KEY.")
@@ -1492,22 +1621,51 @@ def get_consultation_details(
 ):
     """
     Retrieve full consultation details and AI triage summary (F3.3, B4.7).
-    Patients can only view their own account's consultations.
+    Enforces strict access control:
+      - Patients can only view their own account's consultations (H3.1).
+      - Guests can only view their own single emergency case (H1.3).
+      - Doctors can only view their assigned cases or unclaimed cases (H3.2).
+      - Doctors get masked phone numbers; nurses and admins receive no clinical text (H3.3).
+      - Every read writes an append-only audit trail record (H3.8).
     """
     from app.db import get_consultation, get_assignment_for_consultation
-    consultation = get_consultation(consultation_id)
-    if not consultation:
+    consultation_raw = get_consultation(consultation_id)
+    if not consultation_raw:
         raise HTTPException(status_code=404, detail=f"Consultation '{consultation_id}' not found.")
 
+    assignment = get_assignment_for_consultation(consultation_id)
+
     if current_user.role == UserRole.PATIENT:
-        if consultation.get("account_id") and consultation.get("account_id") != current_user.account_id:
+        if consultation_raw.get("account_id") and consultation_raw.get("account_id") != current_user.account_id:
             raise HTTPException(status_code=403, detail="Unauthorized: Access denied to other patient records.")
 
-    if current_user.role == UserRole.GUEST_EMERGENCY:
+    elif current_user.role == UserRole.GUEST_EMERGENCY:
         if current_user.guest_case_id != consultation_id:
             raise HTTPException(status_code=403, detail="Unauthorized: Guest emergency access is restricted to the generated emergency case.")
 
-    consultation["assignment"] = get_assignment_for_consultation(consultation_id)
+    elif current_user.role == UserRole.DOCTOR:
+        if assignment and assignment.get("doctor_id") and assignment.get("doctor_id") != current_user.user_id:
+            raise HTTPException(status_code=403, detail="Forbidden: Case is assigned to another clinician.")
+
+    consultation = dict(consultation_raw)
+    consultation["assignment"] = assignment
+
+    # Role-based masking & privacy preservation (H3.3)
+    if current_user.role == UserRole.DOCTOR:
+        phone = consultation.get("phone_number")
+        if phone:
+            consultation["phone_number"] = phone[:3] + "****" + phone[-2:]
+    elif current_user.role in (UserRole.NURSE, UserRole.ADMIN):
+        # Strip clinical text for nurses and admins
+        for field in ("transcript_original", "transcript_english", "symptoms", "chief_complaint", "clinical_summary"):
+            consultation.pop(field, None)
+
+    get_audit_logger().log(
+        action="CONSULTATION_READ",
+        user_id=current_user.user_id,
+        role=current_user.role.value,
+        consultation_id=consultation_id,
+    )
     return consultation
 
 
@@ -1632,6 +1790,7 @@ def toggle_doctor_availability(
 
 
 @app.get("/api/v1/doctor/roster")
+@app.get("/api/v1/admin/roster")
 def get_doctor_roster(
     department: Optional[str] = None,
     on_duty_only: bool = False,
@@ -1651,6 +1810,26 @@ def get_doctor_roster(
         "count": len(sanitized),
         "doctors": sanitized,
     }
+
+
+@app.get("/api/v1/admin/routing-logs")
+def get_admin_routing_logs(
+    current_admin: AuthenticatedUser = Depends(require_role([UserRole.ADMIN])),
+):
+    """
+    Hospital administrator routing audit logs (B5.7, F4.1).
+    """
+    from app.db import _MEM_AUDIT_LOGS, get_supabase_client
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("audit_logs").select("*").ilike("action", "%ROUTE%").order("created_at", desc=True).limit(50).execute()
+            if res.data:
+                return {"count": len(res.data), "logs": res.data}
+        except Exception:
+            pass
+    routing_logs = [l for l in _MEM_AUDIT_LOGS if "ROUTE" in l.get("action", "").upper()]
+    return {"count": len(routing_logs), "logs": routing_logs}
 
 
 @app.post("/api/v1/staff/doctors/{doctor_id}/verify-registration")

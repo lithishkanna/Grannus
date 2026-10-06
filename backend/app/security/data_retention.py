@@ -1,58 +1,122 @@
 """
-Data Retention and Patient Erasure Handler for Grannus RuralCare AI.
+Data Retention and Audio Purge Handler for Grannus RuralCare AI (Block H4).
 
 Enforces:
-  - 72-hour maximum lifecycle for raw acoustic voice recordings
-  - DPDP Act 2023 Statutory "Right to Erasure" (Right to be Forgotten)
-  - Medical Record Preservation under Telemedicine Practice Guidelines 2020 (3 years for clinical summary)
+  - 24-hour statutory retention limit for raw patient/doctor voice recordings (H4.1, H4.2)
+  - Medical Record Preservation under Telemedicine Practice Guidelines 2020 (Text clinical summary preserved)
+  - Append-only statutory audit logging to deletion_log (H4.3)
+  - DPDP Act 2023 Statutory 'Right to Erasure'
 """
 import time
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger("rural_care.retention")
 
 # Statutory retention limits
-AUDIO_MAX_RETENTION_HOURS = 72
+AUDIO_DEFAULT_RETENTION_HOURS = 24
 CLINICAL_SUMMARY_RETENTION_YEARS = 3
 
 
 class DataRetentionManager:
     def __init__(self):
-        self._scheduled_deletions: Dict[str, float] = {}  # file_path -> expiry_time
+        # file_path -> { "created_at": iso, "delete_after": iso, "expiry_ts": float }
+        self._scheduled_deletions: Dict[str, Dict[str, Any]] = {}
+        self._purged_files: set = set()
         self._erased_patients: List[str] = []
 
-    def schedule_audio_deletion(self, file_path: str, hours: int = AUDIO_MAX_RETENTION_HOURS):
-        """Schedule a raw audio file for automatic deletion."""
+    def schedule_audio_deletion(
+        self,
+        file_path: str,
+        hours: int = AUDIO_DEFAULT_RETENTION_HOURS,
+        hospital_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Schedule a raw audio file for automatic deletion after 24 hours (H4.1).
+        Stores created_at and delete_after timestamps.
+        """
+        now = datetime.now(timezone.utc)
+        delete_after = now + timedelta(hours=hours)
         expiry_ts = time.time() + (hours * 3600)
-        self._scheduled_deletions[file_path] = expiry_ts
-        logger.info("Scheduled audio deletion for %s at timestamp %s", file_path, expiry_ts)
+
+        record = {
+            "file_path": file_path,
+            "hospital_id": hospital_id or "c5b971d1-fe39-40bf-a5cb-539f1a98059f",
+            "created_at": now.isoformat(),
+            "delete_after": delete_after.isoformat(),
+            "expiry_ts": expiry_ts,
+            "purged": False,
+        }
+        self._scheduled_deletions[file_path] = record
+        logger.info("Scheduled 24h audio deletion for %s (expires at %s)", file_path, delete_after.isoformat())
+        return record
 
     def execute_retention_sweep(self) -> List[str]:
-        """Sweep and purge expired audio files."""
-        now = time.time()
+        """
+        Sweep and purge expired audio files (H4.2, H4.3).
+        Deletes audio files from storage and writes records to deletion_log.
+        """
+        now_ts = time.time()
         purged = []
-        for file_path, expiry in list(self._scheduled_deletions.items()):
-            if now >= expiry:
+        from app.db import log_deletion_event
+
+        for file_path, record in list(self._scheduled_deletions.items()):
+            if now_ts >= record.get("expiry_ts", 0):
                 p = Path(file_path)
                 try:
                     if p.exists():
                         p.unlink()
                     purged.append(file_path)
+                    self._purged_files.add(file_path)
                     del self._scheduled_deletions[file_path]
-                    logger.info("Purged expired raw audio: %s", file_path)
+
+                    # Record to append-only deletion_log table (H4.3)
+                    log_deletion_event(
+                        resource_type="audio_recording",
+                        resource_id=file_path,
+                        reason="24-hour statutory audio retention policy expired",
+                        hospital_id=record.get("hospital_id"),
+                        metadata={
+                            "created_at": record.get("created_at"),
+                            "delete_after": record.get("delete_after"),
+                        },
+                    )
+                    logger.info("Purged expired 24h raw audio: %s", file_path)
                 except Exception as exc:
                     logger.error("Failed to purge %s: %s", file_path, exc)
         return purged
 
-    def process_patient_erasure(self, patient_id: str, reason: str = "Patient requested erasure under DPDP Act 2023") -> Dict[str, Any]:
+    def is_audio_purged(self, file_path: str) -> bool:
+        """Check if an audio file was purged or has expired (H4.7)."""
+        if file_path in self._purged_files:
+            return True
+        record = self._scheduled_deletions.get(file_path)
+        if record and time.time() >= record.get("expiry_ts", 0):
+            return True
+        return False
+
+    def process_patient_erasure(
+        self,
+        patient_id: str,
+        reason: str = "Patient requested erasure under DPDP Act 2023",
+        hospital_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Executes statutory Right to Erasure:
           - Purges all stored raw voice recordings
           - Anonymizes identifying metadata in consultation records
+          - Logs action in deletion_log and audit trail
         """
         self._erased_patients.append(patient_id)
+        from app.db import log_deletion_event
+        log_deletion_event(
+            resource_type="patient_account",
+            resource_id=patient_id,
+            reason=reason,
+            hospital_id=hospital_id,
+        )
         logger.warning("STATUTORY_ERASURE_EXECUTED patient_id=%s reason=%s", patient_id, reason)
         return {
             "status": "erasure_complete",

@@ -138,7 +138,15 @@ def test_async_submit_audio_endpoint():
         "gender": "female",
     }
 
-    res = client.post("/api/v1/pipeline/submit-audio", files=file_payload, data=form_data)
+    # H3.5: Unauthenticated submit-audio must return 401
+    unauth_res = client.post("/api/v1/pipeline/submit-audio", files=file_payload, data=form_data)
+    assert unauth_res.status_code == 401
+
+    # Authenticated call
+    patient_token = create_token("patient_test_01", UserRole.PATIENT, phone_number="+919876543210")
+    headers = {"Authorization": f"Bearer {patient_token}"}
+    file_payload_2 = {"audio": ("sample_consultation.wav", io.BytesIO(SAMPLE_WAV_HEADER), "audio/wav")}
+    res = client.post("/api/v1/pipeline/submit-audio", files=file_payload_2, data=form_data, headers=headers)
     assert res.status_code == 202
     data = res.json()
     assert "job_id" in data
