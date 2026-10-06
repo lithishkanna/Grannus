@@ -1,0 +1,271 @@
+<USER_REQUEST>
+make it complete working not a demo product (but with doctor data we have now patients side should pure working mode ) "# Grannus (RuralCare AI): Finish Plan
+
+This is the final checklist to take the project from "working prototype" to "complete and safe to demo with real logins."
+Work through the blocks in order. Each item has an ID, and each block ends with acceptance tests that must pass before moving on.
+
+> **Status at the last repository check (commit `f013629`):** 175 tests, 174 passing. Urgency tiers, routing, profiles, consent, and the remedy library are in place. **Login and OTP are still insecure, and there is no row-level security.** Blocks H1 to H3 fix this and are required before anyone outside the team logs in.
+
+---
+
+## 0. Product rules
+
+- Grannus **routes and translates. It does not diagnose.** Routing is by complaint category.
+- Use "urgency" and "self-care information". Never claim "diagnosis", "validated", or "clinician-approved" until a real clinician has signed off.
+- Show a **"Demo: synthetic data, not medical advice"** banner on every screen until a hospital pilot is approved.
+- Out of scope for now: WhatsApp, IVR, ASHA mode, and real clinical validation. Without real validation, this is a prototype and must not be used for real care decisions.
+
+### Urgency tiers
+
+| Tier | Meaning | Patient sees |
+|---|---|---|
+| `emergency` | Red flags | Full-screen "Call 108", nearest emergency facility, ER alerted |
+| `doctor_today` | Review within 24 h | Queued, with wait estimate |
+| `doctor_soon` | Review in 2 to 3 days | Asynchronous doctor reply |
+| `self_care` | Mild | Approved remedy, "See a doctor if...", check-in |
+
+---
+
+## 1. Who can see what (access matrix)
+
+Enforce on the **server** with role, `hospital_id`, and ownership checks on every query, plus row-level security as a second layer. Hiding a button in the UI is not access control.
+
+| Role | Can see | Cannot see |
+|---|---|---|
+| **Patient** (phone OTP) | Only profiles under their verified number (self and family): reports, doctor replies, history, check-ins | Other numbers' data; any doctor, nurse, or admin screen |
+| **Emergency guest** (name only) | Only the one case they created | History, profile lists, any other case |
+| **Doctor** | Cases assigned to them, their own replies, triage details, and patient details attached to those cases. Unclaimed cases in their department show only complaint, tier, age, gender. | Other doctors' cases, the full phone number, the whole account |
+| **Nurse** | Queue metadata for their hospital | Reply content they did not write |
+| **Admin** | Users, roster, routing logs, deletion log | Clinical content |
+
+---
+
+## 2. Required environment variables
+
+| Variable | Purpose |
+|---|---|
+| `ENV` | `development`, `staging`, or `production` |
+| `JWT_SECRET_KEY` | Token signing. The app must refuse to start without it. |
+| `SUPABASE_URL` | Database URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Server only.** Never exposed to the frontend. |
+| `SMS_PROVIDER` | `twilio_verify`, `msg91`, or `supabase` |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | If using Twilio Verify |
+| `SARVAM_API_KEY`, `GEMINI_API_KEY` | AI services |
+| `AUDIO_RETENTION_HOURS` | Default `24` |
+| `ALLOW_DEV_OTP` | Default `false`. Never `true` in staging or production. |
+| `ALLOWED_ORIGINS` | CORS origins for each environment |
+
+In production the app must **fail to start** if the database, JWT secret, or SMS provider is not configured.
+
+---
+
+## Block H1: Authentication (P0)
+
+### H1.1 Remove the open login
+- [ ] In `auth.py`, delete the legacy branch of `authenticate_credentials` that returns `True` for unknown users with no password.
+- [ ] In `main.py` `/auth/login`, remove the "user_id plus role" path. Only existing staff accounts with a correct email and password can log in.
+- [ ] Staff accounts are created by an admin. Doctors have a registration number verified by the admin, not by a regex.
+
+### H1.2 Real phone OTP (patients)
+- [ ] **Delete `dev_otp_hint` from the API response completely.** OTPs never appear in any response, log, or error.
+- [ ] Add an `SmsProvider` interface with implementations for Twilio Verify (default) and MSG91. Check current India SMS and DLT requirements with the provider.
+- [ ] Flow: enter phone, SMS arrives, enter the code, tap **Verify**, then the dashboard.
+- [ ] Codes: 6 digits, 5-minute expiry, single use. If the provider doesn't verify for you, store a per-OTP random salted hash (not a fixed salt).
+- [ ] Limits: 5 attempts per code, 30-second resend cooldown, per-number and per-IP rate limits, and a daily SMS cap to prevent SMS-pumping abuse.
+- [ ] Development uses the provider's test numbers. No fixed code in the repository.
+- [ ] OTP state lives in the database or the provider, never in process memory.
+
+### H1.3 Emergency access without OTP
+- [ ] An **Emergency** button on the login screen asks only for a name (age optional).
+- [ ] The **"Call 108" screen appears instantly on the device before any API call**, so a server failure cannot delay it.
+- [ ] The backend creates a guest emergency case with a random, unguessable case token held on that device, and alerts the hospital ER.
+- [ ] The guest token can read **only that one case**. It cannot list or open anything else.
+- [ ] The case is marked "unverified" so duty staff can confirm. Add generous IP and device rate limits to prevent ER flooding.
+- [ ] A guest can later verify their phone by OTP and attach the case to their account.
+
+### H1.4 Sessions
+- [ ] Short-lived access tokens, refresh tokens, logout, and revocation.
+- [ ] The token carries `user_id`, `role`, `hospital_id`, and (for patients) `account_id`.
+- [ ] Remove any fallback signing secret.
+
+**Acceptance tests (`tests/test_h1_auth.py`)**
+- `POST /auth/login {"user_id":"x","role":"admin"}` returns 401.
+- An OTP request response contains no code field, and no log line contains a code.
+- A wrong code 5 times locks the attempt, and a used or expired code fails.
+- A guest token reads its own case and gets 403 on any other case or list.
+- Starting with `ENV=production` and no SMS provider configured fails at startup.
+
+---
+
+## Block H2: Database persistence and security (P0)
+
+- [ ] **H2.1** The backend uses the **service-role key, server-side only**. Remove the anon key from backend configuration.
+- [ ] **H2.2** Remove every `_MEM_*` fallback in production. If the database is not configured, fail at startup with a clear error. In-memory mode is allowed only with `ENV=development`.
+- [ ] **H2.3** Migrations (Supabase CLI) with `hospital_id` on every table.
+- [ ] **H2.4** Tables: `hospitals`, `departments`, `staff_users`, `doctors`, `accounts` (phone), `patient_profiles`, `guest_cases`, `consultations`, `pipeline_results`, `transcripts`, `messages` (voice thread), `assignments`, `follow_ups`, `consents`, `audit_log`, `deletion_log`.
+- [ ] **H2.5** **Row-level security enabled on every table, deny by default**, with policies matching the access matrix in section 1.
+- [ ] **H2.6** `audit_log` is append-only (no update or delete permission).
+- [ ] **H2.7** Persist everything that is in memory today: jobs, threads, follow-ups, doctor actions, audit log, retention schedule, erasure list.
+- [ ] **H2.8** Rotate the Supabase keys. The old anon key is in public git history (commit `4d6a1e2`).
+- [ ] **H2.9** Delete `frontend/test-supabase.js`, `frontend/check-*.js`, and `schema.json` if they are still present.
+
+**Acceptance tests (`tests/test_h2_persistence.py`)**
+- Restart the app: consultations, threads, check-ins, and audit entries are all still there.
+- An anonymous request with only a public key returns no rows from any table.
+- Production startup without the database configured fails.
+- An attempt to update or delete an audit row fails.
+
+---
+
+## Block H3: Authorization everywhere (P0)
+
+Apply the access matrix to **every** route. Write one shared dependency (`require_role`, `require_profile_access`, `require_case_access`) and use it on all endpoints.
+
+- [ ] **H3.1** Patient endpoints: load profiles and consultations filtered by the token's `account_id`. Accessing another account's profile returns 403 (or 404).
+- [ ] **H3.2** Doctor endpoints: only cases assigned to that doctor (or unclaimed in their department, with limited fields). Claiming is atomic.
+- [ ] **H3.3** Mask data by role: doctors get age and gender, not the full phone number. Nurses and admins never receive clinical text.
+- [ ] **H3.4** Protect `/escalate`, `/thread` (GET and patient reply), `/check-in`, `/pipeline/job-status/{id}`, and `/media/stream`.
+- [ ] **H3.5** `/pipeline/submit-audio` and `/pipeline/process-audio` must check the token **before** reading or validating the upload.
+- [ ] **H3.6** Optional per-profile 4-digit PIN for sensitive profiles. Warn users that anyone with the phone and SMS access sees all profiles under the number.
+- [ ] **H3.7** "This isn't my number" action and a recovery path for recycled numbers.
+- [ ] **H3.8** Every read and write of clinical data writes an audit row.
+
+**Acceptance tests (`tests/test_h3_access.py`)**
+- Patient A gets 403 or 404 on patient B's profile, consultation, thread, and audio.
+- Doctor X gets 403 on doctor Y's assigned case.
+- A patient token gets 403 on every doctor and admin route.
+- Every route is covered by a parametrized test that calls it with no token (401), the wrong role (403), and the right role (success).
+
+---
+
+## Block H4: Audio retention (24 hours) (P1)
+
+**Keep permanently** (subject to your retention and erasure policy): original and English transcripts, extraction, urgency tier, doctor reply text, back-translation.
+**Delete after 24 hours:** patient recordings and doctor recordings in storage, temp files, and caches.
+
+- [ ] **H4.1** Every audio file has `created_at` and `delete_after` (default `created_at + 24h`) stored in the database.
+- [ ] **H4.2** A **database-driven** deletion job runs every 5 to 10 minutes. It must survive restarts. No in-memory timers.
+- [ ] **H4.3** The job deletes the object from storage, clears any cached copies, and writes a row to `deletion_log`.
+- [ ] **H4.4** The doctor's voice reply is replayable after 24 hours by regenerating audio from the stored text, so only text needs to be kept.
+- [ ] **H4.5** Do not keep recordings in local temp directories beyond the pipeline run. Delete them in a `finally` block.
+- [ ] **H4.6** If a transcript is missing or low confidence when the audio expires, mark the case "needs re-record" and notify the patient.
+- [ ] **H4.7** Signed audio URLs expire in minutes, and return 404 once the file is gone.
+- [ ] **H4.8** Show a visible note in the UI: "Recordings are deleted after 24 hours. Text is kept."
+
+**Acceptance tests (`tests/test_h4_retention.py`)**
+- Advance the clock 25 hours: no audio object remains, and all text is still present.
+- The deletion job survives a restart and still deletes overdue files.
+- A deleted audio URL returns 404.
+
+---
+
+## Block H5: Safety and honesty fixes (P0/P1)
+
+- [ ] **H5.1** Restore the demo banner (removed in commit `f013629`).
+- [ ] **H5.2** Fix the order-dependent failure in `tests/test_block_g_e2e_rehearsal.py::test_emergency_cardiac_case_routing_and_doctor_flow`. It passes alone and fails in the full run, which points to shared state between tests. Reset state per test.
+- [ ] **H5.3** Decide with a clinician whether **pregnancy with bleeding** is `emergency` or `doctor_today`. It is `doctor_today` today. Record the decision in a test.
+- [ ] **H5.4** Empty or failed extraction must route to a human (currently `doctor_soon`). Confirm with a clinician whether this should be `doctor_today`.
+- [ ] **H5.5** Remedy library: replace any "clinician-vetted" or "WHO IMCI compliant" wording until a clinician reviews it. No match returns a fixed "Please consult a doctor" message, never free-written Gemini text.
+- [ ] **H5.6** FHIR: change the Condition category from `encounter-diagnosis`, and add demographics, medications, and allergies.
+- [ ] **H5.7** Keep these invariants as permanent tests: chest pain, vomiting blood, infant fever, and pregnancy bleeding never produce `doctor_soon` or `self_care`; failures never produce `self_care`.
+- [ ] **H5.8** Remove any claim of "validated" or "clinician-approved" from the README and regulatory documents.
+- [ ] **H5.9** Scheduler for the 2 to 3 day check-in: send an SMS or show an in-app prompt on next open. Today only a due date is stored.
+
+---
+
+## Block H6: UI (P1)
+
+### Structure
+- [ ] **H6.1** Separate app shells for **patient**, **doctor**, **nurse**, and **admin**. A user never sees another role's navigation.
+- [ ] **H6.2** Route guards that read the role from the verified session and redirect on a mismatch. Never trust a role stored only in the browser.
+- [ ] **H6.3** One API client that attaches the token, refreshes it, and handles 401 and 403 cleanly.
+- [ ] **H6.4** No direct database access from the browser. Remove any remaining uses of `supabase.ts`.
+- [ ] **H6.5** Real pipeline progress from job status, replacing simulated timers.
+
+### Patient app (mobile first)
+- [ ] **H6.6** Login screen: phone entry, **Send code**, code entry, **Verify**, resend timer, clear errors. A prominent **Emergency** button.
+- [ ] **H6.7** "Who is this for?" profile switcher at the top, add-person flow, optional PIN.
+- [ ] **H6.8** Consent screen before the first recording, in the patient's language.
+- [ ] **H6.9** Large record button, language names in their own script, live waveform, clear listening state.
+- [ ] **H6.10** Result screen per tier, with icons **and** text (never color alone). The emergency tier is full-screen with one big "Call 108" button and the nearest facility.
+- [ ] **H6.11** Self-care tier: approved remedy, "See a doctor if...", check-in, and an **"I feel worse"** button that is always visible.
+- [ ] **H6.12** History timeline per profile with date, tier, and doctor reply. Replies play from text-to-speech, with speed and repeat controls.
+- [ ] **H6.13** "Visit hospital" card with address, hours, and a map link.
+
+### Doctor app (desktop)
+- [ ] **H6.14** Split view: queue on the left (sorted by tier, wait timers, claim state), case on the right.
+- [ ] **H6.15** Case view: both transcripts, extracted symptoms, flags, patient age and gender, and the audio player (while audio still exists).
+- [ ] **H6.16** Reply recorder showing the **back-translation** before sending. Drug names and doses are never auto-translated.
+- [ ] **H6.17** Re-route, override with a mandatory reason, request more information, and an availability toggle.
+
+### Nurse and admin
+- [ ] **H6.18** Nurse: queue overview for their hospital. Admin: roster management, registration verification, routing log, deletion log, simple analytics.
+
+### Design and accessibility
+- [ ] **H6.19** A consistent design system, large tap targets, light and dark themes.
+- [ ] **H6.20** Screen-reader labels, keyboard use on the doctor dashboard, and UI strings in English, Hindi, Tamil, and Telugu.
+- [ ] **H6.21** Offline recording queue (`offline-queue.ts` exists; test it).
+
+---
+
+## Block H7: Demo data (doctor side only)
+
+- [ ] Seed **8 fictional doctors**, each clearly labelled "Demo doctor", with obviously fake registration numbers: General Medicine, Cardiology, Paediatrics, Dermatology, OB-GYN, Orthopaedics, ENT, Duty Doctor.
+- [ ] Each has specialty, languages, schedule, and capacity, and a login created by the admin.
+- [ ] **No seeded patients.** Patients sign up with a real OTP.
+- [ ] Record 6 to 8 sample voices yourselves: chest pain with sweating, child with high fever, 3-day fever, hair loss, leg ache, pregnancy bleeding, and a mumbled recording.
+
+---
+
+## Block H8: Final verification and rehearsal
+
+- [ ] Re-run the attack checks as **permanent automated tests** (they are listed under each block).
+- [ ] CI is green: pytest, ruff, mypy, `tsc`, eslint.
+- [ ] No secrets in the repository, and keys rotated.
+- [ ] Rehearse the full story twice with team members as patients, one phone number shared by two family profiles, and a doctor on a separate device:
+  1. Patient A logs in with a real SMS code and records a mild complaint, then sees self-care.
+  2. A family member on the same number sees their own profile and the shared reports, but never another number's.
+  3. A chest-pain case shows the emergency screen immediately.
+  4. The routed doctor sees only their cases, replies by voice, and the patient hears it.
+  5. A guest uses Emergency with only a name.
+  6. After 24 hours (or a forced clock advance), audio is gone and text remains.
+
+---
+
+## Definition of "finished"
+
+- [ ] No API response, page, or log ever shows an OTP.
+- [ ] The only way into a patient account is a code sent to that phone. Staff need email and password.
+- [ ] `{"user_id":"x","role":"admin"}` returns 401.
+- [ ] Patients see only their own number's profiles. Doctors see only their own cases. A guest sees only their one case.
+- [ ] A restart loses no data, and production refuses to start without the database.
+- [ ] RLS is on for every table, and the backend uses a server-only service-role key.
+- [ ] Audio is deleted within 24 hours, all text is kept, and every deletion is logged.
+- [ ] Chest pain, vomiting blood, infant fever, and pregnancy bleeding never come out as `doctor_soon` or `self_care`.
+- [ ] The demo banner is on every screen, and no document claims diagnosis, validation, or clinician approval.
+- [ ] All tests pass in CI, run in any order.
+
+---
+
+## Decisions needed from you
+
+1. **SMS provider:** Twilio Verify (recommended default), MSG91, or Supabase phone auth.
+2. **Hospital's triage rules:** does the target hospital have its own department list and triage protocol? Use theirs if so.
+3. **Clinical calls:** pregnancy bleeding tier, and the tier for failed extraction (H5.3 and H5.4). A licensed clinician should decide.
+4. **Retention of text:** how long transcripts are kept before deletion (the policy for text, since audio is 24 hours).
+
+---
+
+## Agent prompt template
+
+Use one prompt per block:
+
+> Implement block `<ID>` from `GRANNUS_FINISH_PLAN.md` in this repository. Write the acceptance tests listed for the block first, and make them fail for the right reason before implementing. Do not change unrelated files. Do not add claims of diagnosis, validation, or clinician approval. Never return an OTP in any response or log. When done, run the full backend suite in random order and `tsc`, and report which acceptance checks pass.
+
+**Suggested order:** H1, H2, H3, H5, H4, H6, H7, H8.
+
+*This is an engineering plan, not legal or medical advice. Have counsel review the DPDP Act, CDSCO, and Telemedicine Practice Guidelines questions, and have a licensed clinician review triage rules and the remedy library before any real use.*"
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-10-05T22:07:33+05:30.
+</ADDITIONAL_METADATA>
